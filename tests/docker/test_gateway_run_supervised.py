@@ -31,10 +31,7 @@ from tests.docker.conftest import (
 
 
 def _svstat(container: str, slot: str = "gateway-default") -> str:
-    # Profile gateway slots live in the hermes-owned scandir; static
-    # services such as the dashboard stay in the root scandir.
-    scandir = "/run/hermes-service" if slot.startswith("gateway-") else "/run/service"
-    r = docker_exec_sh(container, f"/command/s6-svstat {scandir}/{slot}")
+    r = docker_exec_sh(container, f"/command/s6-svstat /run/service/{slot}")
     return r.stdout if r.returncode == 0 else ""
 
 

@@ -41,28 +41,26 @@ import {
   noteBrowserPage,
   popOutBrowserTab,
   type PreviewRenderMode,
-  previewTabOwnerProfile,
   type PreviewTarget,
   setPreviewRenderMode
 } from '@/store/preview'
-import { currentSessionId } from '@/store/preview-ownership'
-import { $selectedStoredSessionId, knownSessionProfile, ownerLookupSessionRows } from '@/store/session'
+import { $selectedStoredSessionId } from '@/store/session'
 import { canOpenBrowserWindow, isBrowserWindow } from '@/store/windows'
-
-import { previewPartitionForProfile } from '../../../../electron/preview-guest-throttle'
 
 import { placeAnnotateCard, PreviewAnnotateCard } from './preview-annotate-card'
 import {
+  bindPreviewExecuteJavaScript,
   captureAnnotateCrop,
-  createPreviewAnnotateGuest,
   hideAnnotateDraft,
   installAnnotateOverlay,
+  type PreviewAnnotateGuest,
   showAnnotateDraft,
   syncAnnotatePins,
+  teardownAnnotateOverlay,
   waitAnnotateEvent
 } from './preview-annotate-host'
 import { ArtifactPreview } from './preview-artifact'
-import { externalOpenerFor, PreviewBrowserBar } from './preview-browser-bar'
+import { PreviewBrowserBar } from './preview-browser-bar'
 import { mountBrowserPreviewFrame, type PreviewNavigationSurface } from './preview-browser-frame'
 import { PreviewBrowserFrameHint } from './preview-browser-frame-hint'
 import {
@@ -74,13 +72,12 @@ import {
 } from './preview-console'
 import { type ConsoleEntry } from './preview-console-state'
 import { previewConsoleState } from './preview-console-store'
-import { runPreviewGuestScript, usePreviewDriveChannels, withPreviewDeadline } from './preview-drive-channels'
+import { usePreviewDriveChannels } from './preview-drive-channels'
 import { LocalFilePreview, PreviewEmptyState, PreviewModeSwitcher } from './preview-file'
 import { usePreviewGuestOffscreen } from './preview-guest-offscreen'
 import { type PreviewInputEvent } from './preview-input'
 import { PREVIEW_BROWSER_ATTR, registerPreviewNav } from './preview-nav'
 import { registerPreviewPageReader } from './preview-reader'
-import { watchPreviewDocumentLifecycle } from './preview-script-runner'
 import { RealProfileConsentDialog } from './real-profile-consent-dialog'
 
 type PreviewWebview = HTMLElement &
@@ -283,19 +280,6 @@ function PreviewDocumentBody(props: ComponentProps<typeof LocalFilePreview>) {
   )
 }
 
-/** The in-app browser cookie jar for the tab owned by `sessionId`: its owning profile's partition,
- *  resolved through compression rotations. Per-profile so one profile's sign-ins never land in
- *  another's jar (#150283 P1-3). Module-level so it reads the live stores at webview creation.
- *
- *  A session-less DRAFT tab has no row to resolve a profile from, so it falls back to the tab's own
- *  workspace bucket (#150283 F2) — never the shared default jar, which would expose the default
- *  profile's sign-ins to a named profile's draft workspace. */
-function previewPartitionForTab(sessionId: null | string | undefined, tabId?: null | string): string {
-  const sessionProfile = knownSessionProfile(ownerLookupSessionRows(), currentSessionId(sessionId))
-
-  return previewPartitionForProfile(sessionProfile ?? previewTabOwnerProfile(tabId))
-}
-
 export function PreviewPane({
   embedded = false,
   onClose,
@@ -331,8 +315,6 @@ export function PreviewPane({
   // the live address through this mirror instead of a stale closure.
   const targetUrlRef = useRef(target.url)
   targetUrlRef.current = target.url
-  const ownerSessionIdRef = useRef(sessionId)  // tab owner, read by the guest effect to resolve its partition
-  ownerSessionIdRef.current = sessionId
   const [devtoolsOpen, setDevtoolsOpen] = useState(false)
   const [history, setHistory] = useState({ back: false, forward: false })
   const [loading, setLoading] = useState(true)
@@ -341,7 +323,7 @@ export function PreviewPane({
   const [annotate, setAnnotate] = useState(emptyAnnotateSession)
   const [draftNote, setDraftNote] = useState('')
   const annotateRef = useRef(annotate)
-  const annotateLoopRef = useRef<AbortController | null>(null)
+  const annotateLoopRef = useRef(0)
   const annotateConversationRef = useRef(selectedStoredSessionId)
   annotateRef.current = annotate
 
@@ -490,23 +472,67 @@ export function PreviewPane({
     }
   }, [isWebPreview])
 
-  const annotateGuest = useCallback(() => createPreviewAnnotateGuest(webviewRef.current), [])
+  const annotateGuest = useCallback((): null | PreviewAnnotateGuest => {
+    const webview = webviewRef.current
 
-  const stopAnnotate = useCallback(() => {
-    annotateLoopRef.current?.abort()
+    if (!webview?.executeJavaScript) {
+      return null
+    }
+
+    return {
+      capture: async rect => {
+        const webContentsId = webview.getWebContentsId?.()
+
+        if (typeof webContentsId !== 'number') {
+          throw new Error('preview guest has no webContents')
+        }
+
+        const viewport = (await bindPreviewExecuteJavaScript(webview)(
+          '({ width: window.innerWidth, height: window.innerHeight })'
+        )) as { height: number; width: number }
+
+        const dataUrl = await window.hermesDesktop.capturePreview?.({ rect, viewport, webContentsId })
+
+        if (!dataUrl) {
+          throw new Error('preview capture is unavailable')
+        }
+
+        return dataUrl
+      },
+      executeJavaScript: bindPreviewExecuteJavaScript(webview)
+    }
+  }, [])
+
+  const stopAnnotate = useCallback(async () => {
+    annotateLoopRef.current += 1
+    const guest = annotateGuest()
+
+    if (guest) {
+      await teardownAnnotateOverlay(guest).catch(() => undefined)
+    }
+
     setDraftNote('')
     setAnnotate(endAnnotateMode)
-  }, [])
+  }, [annotateGuest])
 
   // Not an atom mirror: the ref records the last conversation the annotate
   // stack was reset for, so the reset runs once per switch. Extracted into a
   // callback so the effect body carries no `.current` writes (lint contract).
-  const resetAnnotateForConversation = useCallback((sessionId: typeof selectedStoredSessionId) => {
-    annotateConversationRef.current = sessionId
-    annotateLoopRef.current?.abort()
-    setDraftNote('')
-    setAnnotate(emptyAnnotateSession())
-  }, [])
+  const resetAnnotateForConversation = useCallback(
+    (sessionId: typeof selectedStoredSessionId) => {
+      annotateConversationRef.current = sessionId
+      annotateLoopRef.current += 1
+      setDraftNote('')
+      setAnnotate(emptyAnnotateSession())
+
+      const guest = annotateGuest()
+
+      if (guest) {
+        void teardownAnnotateOverlay(guest).catch(() => undefined)
+      }
+    },
+    [annotateGuest]
+  )
 
   useEffect(() => {
     if (annotateConversationRef.current !== selectedStoredSessionId) {
@@ -608,13 +634,11 @@ export function PreviewPane({
       return
     }
 
-    annotateLoopRef.current?.abort()
-    const lifetime = new AbortController()
-    annotateLoopRef.current = lifetime
+    const generation = ++annotateLoopRef.current
     setAnnotate(beginAnnotateMode)
 
     try {
-      await installAnnotateOverlay(guest, lifetime.signal)
+      await installAnnotateOverlay(guest)
       await syncAnnotatePins(
         guest,
         annotateRef.current.stack.pins.map(pin => ({
@@ -625,18 +649,13 @@ export function PreviewPane({
         }))
       )
     } catch (error) {
-      if (lifetime.signal.aborted) {
-        return
-      }
-
-      lifetime.abort()
       setAnnotate(endAnnotateMode)
       notifyError(error, copy.annotateFailed)
 
       return
     }
 
-    while (!lifetime.signal.aborted) {
+    while (annotateLoopRef.current === generation) {
       let event
 
       try {
@@ -645,7 +664,7 @@ export function PreviewPane({
         break
       }
 
-      if (lifetime.signal.aborted) {
+      if (annotateLoopRef.current !== generation) {
         break
       }
 
@@ -670,13 +689,9 @@ export function PreviewPane({
       let imageDataUrl = ''
 
       try {
-        imageDataUrl = await captureAnnotateCrop(guest, event.rect, lifetime.signal)
+        imageDataUrl = await captureAnnotateCrop(guest, event.rect)
       } catch {
         imageDataUrl = ''
-      }
-
-      if (lifetime.signal.aborted) {
-        break
       }
 
       const draft = {
@@ -857,29 +872,20 @@ export function PreviewPane({
       return
     }
 
-    const lifetime = new AbortController()
-    const unregister = registerPreviewPageReader(tabId, async () => {
+    return registerPreviewPageReader(tabId, async () => {
       const webview = webviewRef.current
 
       if (!webview?.executeJavaScript) {
         throw new Error('preview webview is not ready')
       }
 
-      const text = await withPreviewDeadline(
-        signal => runPreviewGuestScript(webview, 'document.body ? document.body.innerText : ""', signal),
-        lifetime.signal
-      )
+      const text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
 
       return {
         text: typeof text === 'string' ? text : '',
         ...guestPage(webview)
       }
     })
-
-    return () => {
-      lifetime.abort()
-      unregister()
-    }
   }, [tabId, usesWebview])
 
   usePreviewDriveChannels(webviewRef, tabId, usesWebview)
@@ -1121,8 +1127,7 @@ export function PreviewPane({
     const webview = document.createElement('webview') as PreviewWebview
     // A page with no background of its own shows white, as in a browser and the remote HTML frame below.
     webview.className = 'flex h-full w-full flex-1 bg-white'
-    // Per-profile cookie jar so one profile's in-app sign-ins never land in another's jar (#150283 P1-3).
-    webview.setAttribute('partition', previewPartitionForTab(ownerSessionIdRef.current, tabId))
+    webview.setAttribute('partition', 'persist:hermes-preview')
     webview.setAttribute('src', initialUrl)
     webview.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no,sandbox=yes')
 
@@ -1193,14 +1198,6 @@ export function PreviewPane({
 
     const onNavigate = (event: Event) => {
       const detail = event as Event & { url?: string }
-
-      // Downloads and cancelled loads can keep the old document alive.
-      // End its annotation session only when a new document actually commits.
-      if (event.type === 'did-navigate') {
-        annotateLoopRef.current?.abort()
-        setDraftNote('')
-        setAnnotate(endAnnotateMode)
-      }
 
       if (detail.url) {
         setLoadError(null)
@@ -1350,7 +1347,6 @@ export function PreviewPane({
     webview.addEventListener('devtools-closed', onDevToolsClosed)
     webview.addEventListener('devtools-opened', onDevToolsOpened)
     webview.addEventListener('did-fail-load', onFail)
-    const stopWatchingDocument = watchPreviewDocumentLifecycle(webview, tabId)
     webview.addEventListener('did-navigate', onNavigate)
     webview.addEventListener('did-navigate-in-page', onNavigate)
     webview.addEventListener('did-start-loading', onStart)
@@ -1366,7 +1362,7 @@ export function PreviewPane({
     webviewRef.current = webview
 
     return () => {
-      annotateLoopRef.current?.abort()
+      annotateLoopRef.current += 1
 
       if (navigationRef.current === webview) {
         navigationRef.current = null
@@ -1382,7 +1378,6 @@ export function PreviewPane({
       webview.removeEventListener('devtools-closed', onDevToolsClosed)
       webview.removeEventListener('devtools-opened', onDevToolsOpened)
       webview.removeEventListener('did-fail-load', onFail)
-      stopWatchingDocument()
       webview.removeEventListener('did-navigate', onNavigate)
       webview.removeEventListener('did-navigate-in-page', onNavigate)
       webview.removeEventListener('did-start-loading', onStart)
@@ -1419,7 +1414,13 @@ export function PreviewPane({
       return
     }
 
-    annotateLoopRef.current?.abort()
+    annotateLoopRef.current += 1
+    const guest = annotateGuest()
+
+    if (guest) {
+      void teardownAnnotateOverlay(guest).catch(() => undefined)
+    }
+
     setDraftNote('')
     setAnnotate(emptyAnnotateSession())
     setLoadError(null)
@@ -1434,7 +1435,7 @@ export function PreviewPane({
       })
       setLoading(false)
     })
-  }, [consoleState, copy.unreachableDescription, isRemoteHtml, isWebPreview, target.url])
+  }, [annotateGuest, consoleState, copy.unreachableDescription, isRemoteHtml, isWebPreview, target.url])
 
   return (
     <aside
@@ -1507,7 +1508,11 @@ export function PreviewPane({
             onFlushComments={() => void flushComments()}
             onForward={goForward}
             onNavigate={navigateTo}
-            onOpenExternal={externalOpenerFor(currentUrl)}
+            onOpenExternal={
+              !isBrowserWindow() && !canOpenBrowserWindow()
+                ? () => void window.hermesDesktop?.openExternal(currentUrl)
+                : undefined
+            }
             onPopIn={isBrowserWindow() ? () => window.close() : undefined}
             onPopOut={
               target.kind !== 'url' || isBrowserWindow() || !tabId || !canOpenBrowserWindow()
@@ -1518,7 +1523,6 @@ export function PreviewPane({
             onToggleAnnotate={toggleAnnotate}
             onToggleConsole={() => consoleState.setOpen(open => !open)}
             onToggleDevTools={toggleDevTools}
-            tabId={tabId}
             url={currentUrl}
           />
         )}

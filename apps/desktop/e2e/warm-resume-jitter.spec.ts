@@ -27,7 +27,7 @@
  * must not rebuild the kept-alive transcript: zero additive bursts and zero
  * reconciles.
  *
- * Prerequisite: `pnpm run build` must have been run so dist/ exists.
+ * Prerequisite: `npm run build` must have been run so dist/ exists.
  */
 
 import { writeEnvFile, writeMockProviderConfig } from '../../../tests-js/scripts/mock-provider-config'

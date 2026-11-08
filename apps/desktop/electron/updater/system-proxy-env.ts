@@ -206,14 +206,10 @@ export async function systemProxyEnv(
 export async function updateProxyEnv(
   env: NodeJS.ProcessEnv = process.env,
   note?: (message: string) => void,
-  updateRoot?: string,
-  hermesHome?: string
+  updateRoot?: string
 ): Promise<NodeJS.ProcessEnv> {
   const defaultSession = session?.defaultSession
-
-  const hosts = [
-    ...new Set([...UPDATE_HOSTS, ...(updateRoot ? configuredUpdateHosts(updateRoot, env, undefined, hermesHome) : [])])
-  ]
+  const hosts = [...new Set([...UPDATE_HOSTS, ...(updateRoot ? configuredUpdateHosts(updateRoot, env) : [])])]
 
   return defaultSession ? systemProxyEnv(env, url => defaultSession.resolveProxy(url), hosts, note) : {}
 }

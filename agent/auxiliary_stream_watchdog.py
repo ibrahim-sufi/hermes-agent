@@ -171,10 +171,12 @@ def consume_chat_stream(chunks: Any, acc: Any, no_progress: Optional[tuple[float
         for chunk in chunks:
             if acc.feed(chunk):
                 watchdog.progress()
-    except Exception:
+    except Exception as exc:
         if not watchdog.fired:
             raise
+        if not acc.finish_reason:
+            raise watchdog.timeout_error() from exc
     finally:
         watchdog.finish()
-    if watchdog.fired and not acc.finish_reason:  # outside the handler: no context, the deadline is the verdict
+    if watchdog.fired and not acc.finish_reason:
         raise watchdog.timeout_error()

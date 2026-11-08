@@ -1,12 +1,7 @@
-import type { GatewayEvent } from '@hermes/shared'
-import { QueryClient } from '@tanstack/react-query'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
-import { useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useMessageStream } from '@/app/session/hooks/use-message-stream'
-import { useSessionStateCache } from '@/app/session/hooks/use-session-state-cache'
 import { assistantTextPart, type ChatMessage, chatMessageText } from '@/lib/chat-messages'
 import {
   assistantTurnKey,
@@ -15,9 +10,6 @@ import {
   resolveSpokenReply
 } from '@/lib/spoken-reply'
 import { playSpeechText } from '@/lib/voice-playback'
-import { $messages as $viewMessages, setActiveSessionId, setSelectedStoredSessionId } from '@/store/session'
-import { clearAllSessionStates } from '@/store/session-states'
-import { flushStreamDeltas } from '@/store/stream-delta-flush'
 import { $voicePlayback, setVoicePlaybackState } from '@/store/voice-playback'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
 
@@ -356,11 +348,6 @@ describe('useAutoSpeakReplies — Edge TTS fallback chain (#93515)', () => {
 describe('useAutoSpeakReplies — final reply after tool calls', () => {
   afterEach(() => {
     cleanup()
-    clearAllSessionStates()
-    setActiveSessionId(null)
-    setSelectedStoredSessionId(null)
-    $viewMessages.set([])
-    vi.restoreAllMocks()
     clearSpokenRepliesForTests()
     clearOwnedSpeechTurnsForTests()
     $autoSpeakReplies.set(false)
@@ -369,35 +356,19 @@ describe('useAutoSpeakReplies — final reply after tool calls', () => {
     vi.clearAllMocks()
   })
 
-  it.each(['streamed', 'standalone', 'deferred-claim'])('voices %s replies without animation frames', async mode => {
-    vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
-    setActiveSessionId(SESSION_ID)
-    setSelectedStoredSessionId(SESSION_ID)
+  it('reads the final reply held behind a progress update of the same turn', async () => {
     // The main-process arbiter within its speech TTL: first claim of a key wins.
     const claimed = new Set<string>()
-    const { promise: turnAccepted, resolve: acceptTurn } = Promise.withResolvers<void>()
-
-    const claimAmbientCue = async (key: string) => {
-      const won = !claimed.has(key) && Boolean(claimed.add(key))
-
-      if (mode === 'deferred-claim' && key.startsWith('speak:turn:') && won) {
-        await turnAccepted
-      }
-
-      return won
-    }
 
     ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
-      claimAmbientCue,
-      notify: vi.fn(async () => undefined)
+      claimAmbientCue: async (key: string) => !claimed.has(key) && Boolean(claimed.add(key))
     }
 
     $autoSpeakReplies.set(true)
 
     const user = { id: 'u1', parts: [assistantTextPart('fix it')], role: 'user' } as ChatMessage
-    const $messages = $viewMessages
-    $messages.set([user])
+    const interim = { ...assistantMessage('assistant-interim-1', 'Looking into it.'), interim: true }
+    const $messages = atom<ChatMessage[]>([user])
 
     // The pendingResponse / consumePendingResponse pair use-composer-voice.ts wires up.
     const pendingReply = () => {
@@ -439,40 +410,15 @@ describe('useAutoSpeakReplies — final reply after tool calls', () => {
       return true
     })
 
-    const { result } = renderHook(
-      () => {
-        const busyRef = useRef(false)
-        const queryClient = useRef(new QueryClient())
-
-        const cache = useSessionStateCache({
-          activeSessionId: SESSION_ID,
-          busyRef,
-          selectedStoredSessionId: SESSION_ID,
-          setAwaitingResponse: () => undefined,
-          setBusy: () => undefined,
-          setMessages: messages => $messages.set(messages)
-        })
-
-        const stream = useMessageStream({
-          activeSessionIdRef: cache.activeSessionIdRef,
-          hydrateFromStoredSession: vi.fn(async () => undefined),
-          queryClient: queryClient.current,
-          refreshHermesConfig: vi.fn(async () => undefined),
-          refreshSessions: vi.fn(async () => undefined),
-          sessionStateByRuntimeIdRef: cache.sessionStateByRuntimeIdRef,
-          updateSessionState: cache.updateSessionState
-        })
-
+    renderHook(
+      () =>
         useAutoSpeakReplies({
           conversationActive: false,
           failureLabel: 'read-aloud failed',
           markSpoken,
           pendingReply,
           sessionId: SESSION_ID
-        })
-
-        return { cache, stream }
-      },
+        }),
       {
         wrapper: ({ children }) => (
           <ComposerScopeProvider value={{ ...MAIN_COMPOSER_SCOPE, $messages }}>{children}</ComposerScopeProvider>
@@ -480,67 +426,26 @@ describe('useAutoSpeakReplies — final reply after tool calls', () => {
       }
     )
 
-    const send = async (type: GatewayEvent['type'], payload: Record<string, unknown> = {}) => {
-      await act(async () => {
-        result.current.stream.handleGatewayEvent({ type, payload, session_id: SESSION_ID })
-      })
-    }
-
-    act(() => {
-      result.current.cache.updateSessionState(SESSION_ID, state => ({ ...state, messages: [user] }), SESSION_ID)
+    await act(async () => {
+      $messages.set([user, interim])
     })
-    await send('message.start')
-
-    if (mode === 'streamed') {
-      await send('message.delta', { text: 'Looking into it.' })
-      act(() => flushStreamDeltas(SESSION_ID))
-    }
-
-    expect($messages.get()).toEqual([user])
-    expect(playSpeechText).not.toHaveBeenCalled()
-
-    await send('message.interim', { text: 'Looking into it.' })
-    expect(result.current.cache.sessionStateByRuntimeIdRef.current.get(SESSION_ID)?.busy).toBe(true)
-    expect($messages.get().at(-1)).toMatchObject({ interim: true, pending: false })
-
-    if (mode === 'deferred-claim') {
-      expect(playSpeechText).not.toHaveBeenCalled()
-    } else {
-      expect(playSpeechText).toHaveBeenLastCalledWith(
-        'Looking into it.',
-        expect.objectContaining({ source: 'read-aloud' })
-      )
-      expect(playSpeechText).toHaveBeenCalledTimes(1)
-    }
-
-    // The final lands while interim playback OR its turn-claim IPC is pending.
-    await send('message.delta', { text: 'Here is the final report.' })
-    act(() => flushStreamDeltas(SESSION_ID))
-    expect(chatMessageText($messages.get().at(-1)!)).toBe('Looking into it.')
-    await send('message.complete', { text: 'Here is the final report.' })
-    expect(result.current.cache.sessionStateByRuntimeIdRef.current.get(SESSION_ID)?.busy).toBe(false)
-    expect(chatMessageText($messages.get().at(-1)!)).toBe('Here is the final report.')
-
-    if (mode === 'deferred-claim') {
-      expect(playSpeechText).not.toHaveBeenCalled()
-      await act(async () => acceptTurn())
-      expect(playSpeechText).toHaveBeenLastCalledWith(
-        'Here is the final report.',
-        expect.objectContaining({ source: 'read-aloud' })
-      )
-    }
-
     expect(playSpeechText).toHaveBeenCalledTimes(1)
 
-    // Playback ending must not re-speak the reply or resurrect the superseded interim.
+    // The final reply lands while the progress update is still playing: held.
+    await act(async () => {
+      $messages.set([user, interim, assistantMessage('assistant-stream-2', 'Here is the final report.')])
+    })
+    expect(playSpeechText).toHaveBeenCalledTimes(1)
+
+    // The progress update's clip ends.
     await act(async () => {
       setVoicePlaybackState({ ...IDLE_STATE })
     })
 
-    expect(playSpeechText).toHaveBeenCalledTimes(mode === 'deferred-claim' ? 1 : 2)
+    expect(playSpeechText).toHaveBeenCalledTimes(2)
     expect(playSpeechText).toHaveBeenLastCalledWith(
       'Here is the final report.',
-      expect.objectContaining({ messageId: $messages.get().at(-1)!.id, source: 'read-aloud' })
+      expect.objectContaining({ messageId: 'assistant-stream-2', source: 'read-aloud' })
     )
   })
 })

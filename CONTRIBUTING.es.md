@@ -111,7 +111,7 @@ hermes pm lock
 source ./activate
 ```
 
-Para JavaScript, ejecuta `pnpm install --frozen-lockfile` en la raíz del repositorio. Consulta
+Para JavaScript, ejecuta `npm ci` en el workspace correspondiente. Consulta
 [CONTRIBUTING.md](CONTRIBUTING.md) para los requisitos completos.
 
 ---

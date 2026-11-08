@@ -80,7 +80,7 @@ export function GroupImageControls({ image, onImage, seedName, seedMembers }: Gr
       })
 
       if (!res?.success) {
-        throw new Error(res?.error || b.group.pictureGenerationFailed)
+        throw new Error(res?.error || 'generation failed')
       }
 
       const img = res.image_data || res.image
@@ -383,13 +383,6 @@ interface GroupClarifyCardProps {
  *    closed choice. Answer sends via the member's own source. */
 export function GroupClarifyCard({ entry, members }: GroupClarifyCardProps) {
   const b = useBots()
-  const { t } = useI18n()
-
-  const approvalLabels: Record<string, string> = {
-    once: b.canonical.allowOnce, deny: b.canonical.deny,
-    session: t.assistant.approval.allowSession, always: t.assistant.approval.alwaysAllow
-  }
-
   const { group } = entry
   const isApproval = entry.kind === 'approval'
   const member = members.find(m => groupMemberKey(m) === entry.memberKey) || members.find(m => m.name === entry.member)
@@ -544,7 +537,7 @@ export function GroupClarifyCard({ entry, members }: GroupClarifyCardProps) {
                     size="sm"
                     variant={chosen ? 'default' : 'secondary'}
                   >
-                    {isApproval ? approvalLabels[choice] || choice : choice}
+                    {choice}
                   </Button>
                 )
               })}
@@ -578,7 +571,7 @@ export function GroupClarifyCard({ entry, members }: GroupClarifyCardProps) {
                   void submit()
                 }
               }}
-              placeholder={q.choices.length ? b.group.ownAnswerPlaceholder : b.group.answerPlaceholder}
+              placeholder={q.choices.length ? 'Or type your own answer…' : 'Type your answer…'}
               value={drafts[q.qid] || ''}
             />
           )}
@@ -588,7 +581,7 @@ export function GroupClarifyCard({ entry, members }: GroupClarifyCardProps) {
       {isApproval ? null : (
         <div className="flex justify-end">
           <Button disabled={sending || !anyAnswered || !member} onClick={() => void submit()} size="sm">
-            {sending ? b.group.sending : b.group.answer}
+            {sending ? 'Sending…' : 'Answer'}
           </Button>
         </div>
       )}

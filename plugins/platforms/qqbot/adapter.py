@@ -784,8 +784,7 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         nick = str(member.get("nick", "")) or str(author.get("username", ""))
         await self._ingest(
             d, msg_id, content, d.get("attachments"), timestamp,
-            chat_id=channel_id, qq_chat_type="guild", user_id=author_id, user_name=nick or None, chat_type="group",
-            is_bot=bool(author.get("bot")))
+            chat_id=channel_id, qq_chat_type="guild", user_id=author_id, user_name=nick or None, chat_type="group")
 
     async def _handle_dm_message(self, d, msg_id, content, author, timestamp) -> None:
         guild_id = str(d.get("guild_id", ""))
@@ -798,8 +797,7 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
             return
         await self._ingest(
             d, msg_id, content, d.get("attachments"), timestamp,
-            chat_id=guild_id, qq_chat_type="dm", user_id=author_id, chat_type="dm",
-            is_bot=bool(author.get("bot")))
+            chat_id=guild_id, qq_chat_type="dm", user_id=author_id, chat_type="dm")
 
     _INBOUND_HANDLERS = {
         "C2C_MESSAGE_CREATE": "_handle_c2c_message",

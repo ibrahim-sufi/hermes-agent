@@ -17,12 +17,10 @@ interface ModelRoutesEditorProps {
   scope: ProfileScope
   routes: DelegationModelMap
   providerNames: ReadonlyMap<string, string>
-  /** Route keys the installed backend declares; an editor control appears only for these. */
-  routeKeys: readonly string[]
 }
 
 /** `delegation.backends.model_map`: the named routes the agent picks between, with create / edit / delete. */
-export function ModelRoutesEditor({ scope, routes, providerNames, routeKeys }: ModelRoutesEditorProps) {
+export function ModelRoutesEditor({ scope, routes, providerNames }: ModelRoutesEditorProps) {
   const { t } = useI18n()
   const r = t.settings.model.subagents.routing
   // undefined = closed, null = creating, a route = editing it.
@@ -83,7 +81,6 @@ export function ModelRoutesEditor({ scope, routes, providerNames, routeKeys }: M
           onClose={() => setEditing(undefined)}
           onSave={route => save(upsertRoute(routes, editing?.name ?? null, route))}
           route={editing}
-          routeKeys={routeKeys}
           scope={scope}
           taken={routes.options.map(o => o.name).filter(name => name !== editing?.name)}
         />
@@ -109,8 +106,7 @@ function RouteRow({ route, isDefault, providerName, onEdit, onMakeDefault, onDel
     providerName || (route.base_url ? r.baseUrlRoute(route.base_url) : ''),
     route.model,
     route.reasoning_effort ? `${r.effortLabel.toLowerCase()} ${route.reasoning_effort}` : '',
-    route.service_tier ?? '',
-    route.daybreak === true ? r.daybreakLabel : ''
+    route.service_tier ?? ''
   ].filter(Boolean)
 
   return (

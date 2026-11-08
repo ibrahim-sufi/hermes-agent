@@ -290,9 +290,9 @@ export function useComposerDraft({
   // stack, so tiles, pop-outs, and secondary windows still auto-focus.
   useEffect(() => {
     if (!inputDisabled && paneVisible && !floating) {
-      // Revealing a session must not open a phone keyboard or take focus from
-      // its tab header. Explicit composer requests below still focus normally.
-      if (isTouchInteraction() || document.activeElement?.closest('[role="tab"]')) {
+      // A tab becoming visible or a turn finishing is not a request to open
+      // a phone keyboard. Explicit focus requests below still focus normally.
+      if (isTouchInteraction()) {
         markActiveComposer(target)
       } else {
         focusInput()

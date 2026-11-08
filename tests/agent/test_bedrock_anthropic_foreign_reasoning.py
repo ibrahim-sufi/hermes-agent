@@ -256,8 +256,7 @@ def bedrock_claude_agent(monkeypatch):
         fallback_model=[{"provider": "bedrock", "model": GPT}],
         quiet_mode=True, skip_context_files=True, skip_memory=True, max_iterations=4,
     )
-    # Configured off (model.streaming: false), so it survives the fallback's route change too.
-    agent._disable_streaming = agent._disable_streaming_seed = True
+    agent._disable_streaming = True
     agent._persist_session = lambda *a, **k: None
     agent._save_trajectory = lambda *a, **k: None
     return agent, log, converse_models

@@ -16,7 +16,6 @@ from typing import Any, Callable, Dict, List, Optional
 from agent.monitoring import emitter
 from agent.monitoring.events import GatewayDiagnosticEvent, GatewayHealthEvent
 from agent.monitoring.redaction import redact_bounded
-from hermes_logging import canonical_logger_name
 
 logger = logging.getLogger(__name__)
 
@@ -312,14 +311,13 @@ class GatewayDiagnosticLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            name = canonical_logger_name(record.name)
-            if record.levelno < logging.WARNING or not (name == "gateway" or name.startswith("gateway.")):
+            if record.levelno < logging.WARNING or not (record.name == "gateway" or record.name.startswith("gateway.")):
                 return
-            subsystem = subsystem_for_logger(name)
+            subsystem = subsystem_for_logger(record.name)
             error_class = classify_gateway_error(record.getMessage())
             emitter.get_emitter().emit(GatewayDiagnosticEvent(
                 name=f"gateway.log.{record.levelname.lower()}", subsystem=subsystem,
-                source_logger=source_logger_for_export(name), platform=platform_for_subsystem(subsystem),
+                source_logger=source_logger_for_export(record.name), platform=platform_for_subsystem(subsystem),
                 error_class=error_class, error_code=error_class, profile=self.profile, version=self.version,
                 severity=record.levelname.lower(),
             ))

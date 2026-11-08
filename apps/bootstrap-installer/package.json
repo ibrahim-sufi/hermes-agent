@@ -1,9 +1,6 @@
 {
   "name": "@hermes/bootstrap-installer",
   "private": true,
-  "engines": {
-    "npm": "npm is refused here: run pnpm install --frozen-lockfile at the repository root"
-  },
   "version": "0.0.0",
   "description": "Hermes Setup — signed installer that drives scripts/install.ps1 with a polished native UI.",
   "type": "module",
@@ -16,13 +13,12 @@
     "tauri:build": "tauri build",
     "tauri:build:debug": "tauri build --debug",
     "typecheck": "tsc -p . --noEmit",
-    "check": "pnpm run typecheck && pnpm run lint",
+    "check": "npm run typecheck && npm run lint",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "fix": "pnpm run lint:fix"
+    "fix": "npm run lint:fix"
   },
   "dependencies": {
-    "@nanostores/react": "1.1.0",
     "@nous-research/ui": "0.19.1",
     "@tailwindcss/typography": "0.5.20",
     "@tailwindcss/vite": "4.3.3",

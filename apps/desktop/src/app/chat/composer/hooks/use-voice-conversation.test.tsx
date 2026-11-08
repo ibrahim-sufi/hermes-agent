@@ -205,7 +205,7 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
 
     act(() => {
-      monitorCalls.at(-1)?.onSpeech(false)
+      monitorCalls.at(-1)?.onSpeech()
     })
 
     expect(onInterrupt).toHaveBeenCalledTimes(1)
@@ -225,7 +225,7 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     const monitor = monitorCalls.at(-1)
 
     act(() => {
-      monitor?.onSpeech(false)
+      monitor?.onSpeech()
     })
 
     // Interrupt lands → the turn ends → busy flips false.
@@ -251,7 +251,7 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     hook.rerender({ busy: false })
 
     act(() => {
-      monitorCalls.at(-1)?.onSpeech(true)
+      monitorCalls.at(-1)?.onSpeech()
     })
 
     expect(onInterrupt).not.toHaveBeenCalled()
@@ -270,7 +270,7 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     const monitor = monitorCalls.at(-1)
 
     act(() => {
-      monitor?.onSpeech(false)
+      monitor?.onSpeech()
     })
     hook.rerender({ busy: false })
 
@@ -352,11 +352,8 @@ describe('useVoiceConversation TTS echo guard (#126708)', () => {
     cleanup()
   })
 
-  /** Deliver a barge capture with playback provenance independent of current playback. */
-  const bargeWith = async (
-    transcript: string,
-    { playing, duringPlayback = playing }: { playing: boolean; duringPlayback?: boolean }
-  ) => {
+  /** Barge while `spokenReply` is (or is not) audibly playing, then deliver the capture. */
+  const bargeWith = async (transcript: string, { playing }: { playing: boolean }) => {
     const convo = renderConversation({
       pendingResponse: () => (replyReady ? { id: 'reply-1', pending: false, text: spokenReply } : null),
       transcript
@@ -374,7 +371,7 @@ describe('useVoiceConversation TTS echo guard (#126708)', () => {
     $voicePlayback.set({ ...$voicePlayback.get(), status: playing ? 'speaking' : 'idle' })
 
     act(() => {
-      monitor?.onSpeech(duringPlayback)
+      monitor?.onSpeech()
     })
     // The barged reply is consumed (settleAfterSpeech) and the turn ends.
     replyReady = false
@@ -390,10 +387,9 @@ describe('useVoiceConversation TTS echo guard (#126708)', () => {
     return { ...convo, startsBefore }
   }
 
-  it.each([true, false])('drops playback echo delivered with current playback %s', async playing => {
+  it('drops a playback-phase capture that is a fragment of the reply being spoken', async () => {
     const { onSubmit, startsBefore } = await bargeWith('the build failed because of a missing dependency', {
-      playing,
-      duringPlayback: true
+      playing: true
     })
 
     // The mic re-arms for a real turn…
@@ -405,11 +401,8 @@ describe('useVoiceConversation TTS echo guard (#126708)', () => {
     expect(takeVoicePlaybackInterrupted).toHaveBeenCalledTimes(1)
   })
 
-  it.each([true, false])('submits a genuine playback interjection with current playback %s', async playing => {
-    const { onSubmit } = await bargeWith('actually can you also check my calendar for tomorrow', {
-      playing,
-      duringPlayback: true
-    })
+  it('still submits a genuine interjection captured during playback', async () => {
+    const { onSubmit } = await bargeWith('actually can you also check my calendar for tomorrow', { playing: true })
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('actually can you also check my calendar for tomorrow'))
     expect(takeVoicePlaybackInterrupted).not.toHaveBeenCalled()
@@ -556,7 +549,7 @@ describe('useVoiceConversation parks an undeliverable barge transcript (#123357)
     const monitor = monitorCalls.at(-1)
 
     act(() => {
-      monitor?.onSpeech(false)
+      monitor?.onSpeech()
     })
 
     // The interrupt never settles: busy stays true through the whole window.

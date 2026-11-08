@@ -13,7 +13,6 @@ import gateway.run as gateway_run
 from gateway.config import Platform
 from gateway.platforms.event import MessageEvent
 from gateway.session import SessionSource
-from gateway.session_state import SERVICE_TIER_UNSET
 
 
 class _CapturingAgent:
@@ -45,12 +44,6 @@ class _CapturingAgent:
             "api_calls": 1,
             "completed": True,
         }
-
-
-def _tier_overrides(runner):
-    """Sessions holding a /fast override (an explicit None counts), keyed by session key."""
-    return {k: st.conversation.service_tier_override for k, st in runner._sessions_map().items()
-            if st.conversation.service_tier_override is not SERVICE_TIER_UNSET}
 
 
 def _install_fake_agent(monkeypatch):
@@ -155,7 +148,7 @@ async def test_handle_fast_command_global_flag_persists_config(monkeypatch, tmp_
     saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
     assert saved["agent"]["service_tier"] == "fast"
     # Global write supersedes the session override.
-    assert not _tier_overrides(runner)
+    assert not runner._session_service_tier_overrides
 
 
 @pytest.mark.asyncio
@@ -181,7 +174,7 @@ async def test_session_fast_override_beats_config_default(monkeypatch, tmp_path)
 
     assert "NORMAL" in response
     # Override stores explicit None (normal) and wins over config "fast".
-    assert session_key in _tier_overrides(runner)
+    assert session_key in runner._session_service_tier_overrides
     assert runner._resolve_session_service_tier(session_key=session_key) is None
     # A different session still gets the config default.
     assert runner._resolve_session_service_tier(session_key="other-session") == "priority"
@@ -220,7 +213,7 @@ async def test_fast_gate_follows_the_session_route(monkeypatch, tmp_path, defaul
         assert route["request_overrides"] == {"service_tier": "ultrafast"}
     else:
         assert "only available" in response
-        assert session_key not in _tier_overrides(runner)
+        assert session_key not in runner._session_service_tier_overrides
 
 
 @pytest.mark.asyncio
@@ -244,4 +237,4 @@ async def test_fast_override_lands_under_the_recovered_telegram_topic_key(monkey
 
     assert "FAST" in response
     assert runner._resolve_session_service_tier(session_key=turn_key) == "priority"
-    assert raw_key not in _tier_overrides(runner)
+    assert raw_key not in runner._session_service_tier_overrides

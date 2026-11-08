@@ -13,11 +13,8 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Children, Fragment } from 'react'
 
-import type { GroupChatMessages } from './group-chat-locales'
 import { parseGroupChatMentions } from './group-rounds'
 import type { GroupMember } from './types'
-
-type MentionLabels = Pick<GroupChatMessages, 'mentionBot' | 'mentionEveryone' | 'mentionUser'>
 
 export type GroupMentionKind = 'agent' | 'broadcast' | 'human'
 
@@ -40,14 +37,14 @@ export function classifyGroupMention(token: string, members: GroupMember[]): Gro
   return parsed.mentioned.size ? 'agent' : null
 }
 
-const TITLE_KEYS = {
-  agent: 'mentionBot',
-  broadcast: 'mentionEveryone',
-  human: 'mentionUser'
-} as const
+const TITLES: Record<GroupMentionKind, string> = {
+  agent: 'Bot in this room',
+  broadcast: 'Everyone in the room',
+  human: 'You — the room is waiting on a human'
+}
 
 /** Split one text node into prose and recognized mention spans. */
-export function renderGroupMentionText(text: string, members: GroupMember[], labels: MentionLabels): ReactNode {
+export function renderGroupMentionText(text: string, members: GroupMember[]): ReactNode {
   const parts: ReactNode[] = []
   let last = 0
 
@@ -65,7 +62,7 @@ export function renderGroupMentionText(text: string, members: GroupMember[], lab
     }
 
     parts.push(
-      <span className="ref font-medium" data-ref={kind} key={`${start}:${match[0]}`} title={labels[TITLE_KEYS[kind]]}>
+      <span className="ref font-medium" data-ref={kind} key={`${start}:${match[0]}`} title={TITLES[kind]}>
         {match[0]}
       </span>
     )
@@ -83,15 +80,15 @@ export function renderGroupMentionText(text: string, members: GroupMember[], lab
   return <Fragment>{parts}</Fragment>
 }
 
-function mapTextChildren(children: ReactNode, members: GroupMember[], labels: MentionLabels): ReactNode {
-  return Children.map(children, child => (typeof child === 'string' ? renderGroupMentionText(child, members, labels) : child))
+function mapTextChildren(children: ReactNode, members: GroupMember[]): ReactNode {
+  return Children.map(children, child => (typeof child === 'string' ? renderGroupMentionText(child, members) : child))
 }
 
 /** `decorateText` hook for the shell's `MessageTextContent`: the same
  *  splitter, applied to the direct text nodes of its paragraph-level
  *  containers (p / li / td). */
-export function groupMentionText(members: GroupMember[], labels: MentionLabels) {
-  return (children: ReactNode) => mapTextChildren(children, members, labels)
+export function groupMentionText(members: GroupMember[]) {
+  return (children: ReactNode) => mapTextChildren(children, members)
 }
 
 /** Streamdown `components` override (older shells without
@@ -99,10 +96,10 @@ export function groupMentionText(members: GroupMember[], labels: MentionLabels) 
  *  their direct text nodes through the mention splitter. Nested inline
  *  markup (bold, links) and code stay as Streamdown produced them, so a
  *  mention inside a backtick span is left literal on purpose. */
-export function groupMentionComponents(members: GroupMember[], labels: MentionLabels) {
+export function groupMentionComponents(members: GroupMember[]) {
   return {
-    li: ({ children, ...props }: ComponentProps<'li'>) => <li {...props}>{mapTextChildren(children, members, labels)}</li>,
-    p: ({ children, ...props }: ComponentProps<'p'>) => <p {...props}>{mapTextChildren(children, members, labels)}</p>,
-    td: ({ children, ...props }: ComponentProps<'td'>) => <td {...props}>{mapTextChildren(children, members, labels)}</td>
+    li: ({ children, ...props }: ComponentProps<'li'>) => <li {...props}>{mapTextChildren(children, members)}</li>,
+    p: ({ children, ...props }: ComponentProps<'p'>) => <p {...props}>{mapTextChildren(children, members)}</p>,
+    td: ({ children, ...props }: ComponentProps<'td'>) => <td {...props}>{mapTextChildren(children, members)}</td>
   }
 }

@@ -37,13 +37,12 @@ def complete_source_checkout(
     completion_message: str | None = None,
     announce: str | None = None,
     followups: list[tuple[str, str]] | None = None,
-    after_dependencies=None,
+    before_build=None,
 ) -> bool:
     """Publish commands, build the products, then run post-build maintenance.
 
-    ``after_dependencies`` (an update's launch-file refresh and paused-gateway restart) runs once
-    the launchers are published and the Python and Node dependencies prepared, before the long
-    product builds start (``build_update_products``).
+    ``before_build`` (an update's paused-gateway restart) runs once the launchers are published:
+    dependencies are already synced, the long product builds have not started.
 
     Every step runs even when an earlier one failed; each failure is printed as ``⚠``,
     recorded on the open update receipt and appended to ``followups`` as ``(step, reason)``.
@@ -75,7 +74,7 @@ def complete_source_checkout(
             pre_update_snapshot_id=pre_update_snapshot_id,
             pre_update_version=pre_update_version,
             completion_message=completion_message, announce=announce, followups=followups,
-            after_dependencies=after_dependencies,
+            before_build=before_build,
         )
     finally:
         lock.release()
@@ -92,7 +91,7 @@ def _complete_locked(
     completion_message: str | None,
     announce: str | None,
     followups: list[tuple[str, str]] | None = None,
-    after_dependencies=None,
+    before_build=None,
 ) -> bool:
     """The completion body; callers hold the update lock already."""
     from hermes_cli.source_build import build_update_products
@@ -122,7 +121,9 @@ def _complete_locked(
             owed.append((name, reason))
 
     step("launchers", lambda: publish_launchers(root))
-    step("build", lambda: build_update_products(root, desktop=desktop, after_dependencies=after_dependencies))
+    if before_build is not None:
+        before_build()  # never raises: a failed restart stays owed and is retried after the build
+    step("build", lambda: build_update_products(root, desktop=desktop))
     if announce:
         print(announce)
     verdict: list[bool] = []

@@ -224,17 +224,7 @@ function resolveRef(rawRef) {
 }
 
 function readTargetMetadata(sha) {
-  // Targets older than the pnpm switch carry npm's lockfile instead. Both targets run on
-  // the harness checkout's install, which no npm lock can be shown to match: name the
-  // lockfile so that mismatch reads as one.
-  let lockfile = 'pnpm-lock.yaml'
-  let lock
-  try {
-    lock = run('git', ['show', '--end-of-options', `${sha}:${lockfile}`])
-  } catch {
-    lockfile = 'package-lock.json'
-    lock = run('git', ['show', '--end-of-options', `${sha}:${lockfile}`])
-  }
+  const lock = run('git', ['show', '--end-of-options', `${sha}:package-lock.json`])
   const pyproject = run('git', ['show', '--end-of-options', `${sha}:pyproject.toml`])
   const uvLock = run('git', ['show', '--end-of-options', `${sha}:uv.lock`])
   const pkg = JSON.parse(run('git', ['show', '--end-of-options', `${sha}:apps/desktop/package.json`]))
@@ -242,7 +232,6 @@ function readTargetMetadata(sha) {
   return {
     electron: pkg.devDependencies?.electron,
     electronBuild: pkg.build?.electronVersion,
-    lockfile,
     lockSha256: sha256(lock),
     pyprojectSha256: sha256(pyproject),
     uvLockSha256: sha256(uvLock)
@@ -300,7 +289,7 @@ function prepareTarget(label, sha, root, output) {
 
     const targetDesktop = join(targetRoot, 'apps/desktop')
     const buildLog = join(output, `${label}-build.log`)
-    run('pnpm', ['--dir', 'apps/desktop', 'run', 'build'], {
+    run('npm', ['run', '--prefix', 'apps/desktop', 'build'], {
       cwd: targetRoot,
       env: sanitizedEnv({ VITE_SHORT_SESSION_HANG_REPRO: '1' }),
       logPath: buildLog

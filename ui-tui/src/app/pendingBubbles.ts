@@ -1,4 +1,4 @@
-import type { SessionInfo } from '@hermes/shared/gateway-types'
+import type { SessionInfo } from '../types.js'
 
 export type PendingRow = NonNullable<SessionInfo['pending_submissions']>[number]
 

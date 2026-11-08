@@ -8,9 +8,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-from hermes_cli._startup_fast import project_root_str
-
-PROJECT_ROOT = Path(project_root_str())
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 from hermes_cli.auth import AuthError, resolve_provider
 from hermes_cli.colors import Colors, color

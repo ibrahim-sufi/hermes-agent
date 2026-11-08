@@ -10,8 +10,6 @@
 import { atom } from '@hermes/plugin-sdk'
 
 import { $groupChats, groupSpeakerLabel } from './group-chat'
-import { groupReasonText } from './group-reason-text'
-import { botsText, type BotsText } from './i18n'
 import type { GroupActivityEvent, GroupActivityKind } from './types'
 
 // ── group activity feed ─────────────────────────────────────────────────────
@@ -142,44 +140,36 @@ export function groupFailureDetail(message: unknown): string {
  *  pool saturation is not misread as a broken bot. */
 export function groupActivityLabel(event: GroupActivityEntry, group?: null | string) {
   const kind = event?.kind
-  const labels = botsText().group
-
-  if (event?.member === 'You' && (kind === 'queued' || kind === 'stopped')) {
-    return kind === 'queued' ? labels.activityUserQueued : labels.activityUserStopped
-  }
-
-  const base = labels[GROUP_ACTIVITY_LABELS[kind]] || kind || labels.activityUnknown
+  const base = GROUP_ACTIVITY_LABELS[kind] || kind || 'did something'
 
   if (kind === 'cancelled' || kind === 'settled' || kind === 'capped') {
     return base
   }
 
-  const who = event?.member === 'You' ? labels.you : groupSpeakerLabel(event?.member || labels.activityBot, group)
+  const who = event?.member === 'You' ? 'You' : groupSpeakerLabel(event?.member || 'A bot', group)
   const reason = kind === 'failed' ? String(event?.reason || '').trim() : ''
 
   if (kind === 'failed' && reason === GROUP_SLOT_WAIT_REASON) {
-    return `${who} ${labels.activitySlotWait}`
+    return `${who} couldn't start — too many bots running`
   }
 
-  const detail = groupReasonText(reason, botsText().canonical)
-
-  return `${who} ${base}${detail ? ` — ${detail}` : ''}`
+  return `${who} ${base}${reason ? ` — ${reason}` : ''}`
 }
 
-const GROUP_ACTIVITY_LABELS = {
-  'queued': 'activityQueued',
-  'working': 'activityWorking',
-  'replied': 'activityReplied',
-  'passed': 'activityPassed',
-  'timed-out': 'activityTimedOut',
-  'failed': 'activityFailed',
-  'cancelled': 'activityCancelled',
-  'settled': 'activitySettled',
-  'capped': 'activityCapped',
-  'delivered': 'activityDelivered',
-  'held': 'activityHeld',
-  'stopped': 'activityStopped'
-} satisfies Record<GroupActivityKind, keyof BotsText['group']>
+const GROUP_ACTIVITY_LABELS: Record<GroupActivityKind, string> = {
+  queued: 'sent a message',
+  working: 'is working…',
+  replied: 'replied',
+  passed: 'passed',
+  'timed-out': 'took too long',
+  failed: 'hit an error',
+  cancelled: 'turn interrupted by a newer message',
+  settled: 'turn settled',
+  capped: 'turn stopped at the round/message cap',
+  delivered: 'delivered a late reply',
+  held: 'is held (stopped by you) — @mention it or say resume to release',
+  stopped: 'stopped the room — remaining turns are held until resumed'
+}
 
 export const GROUP_ACTIVITY_GLYPHS: Record<GroupActivityKind, string> = {
   queued: 'comment',

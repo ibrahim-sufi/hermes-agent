@@ -6,7 +6,7 @@
  * should detect the unconfigured state and show the DesktopOnboardingOverlay
  * with provider options / API key form.
  *
- * Prerequisite: `pnpm run build` must have been run so dist/ exists.
+ * Prerequisite: `npm run build` must have been run so dist/ exists.
  */
 
 import { test } from './test'

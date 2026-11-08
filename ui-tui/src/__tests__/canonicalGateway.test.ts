@@ -1,7 +1,6 @@
-import { canonicalRequest, canonicalResult, sharedControlParams } from '@hermes/shared/gateway-canonical'
 import { expect, it } from 'vitest'
 
-import { localCreationOptions } from '../launchOptions.js'
+import { canonicalRequest, canonicalResult, localCreationOptions, sharedControlParams } from '../canonicalGateway.js'
 
 it.each(['HERMES_SAFE_MODE', 'HERMES_IGNORE_USER_CONFIG'])('carries %s on the launching session policy', flag => {
   const field = flag === 'HERMES_SAFE_MODE' ? 'safe_mode' : 'ignore_user_config'

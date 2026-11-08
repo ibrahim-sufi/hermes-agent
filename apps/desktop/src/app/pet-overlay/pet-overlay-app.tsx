@@ -410,6 +410,7 @@ export function PetOverlayApp() {
             color: 'var(--foreground)',
             fontSize: 12,
             marginBottom: 8,
+            outline: 'none',
             padding: '4px 8px',
             width: 184
           }}

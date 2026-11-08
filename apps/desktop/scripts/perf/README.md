@@ -10,20 +10,20 @@ client, arg parsing, stats, and output (and never had a baseline).
 ```bash
 # Isolated instance (recommended) — no running app or LLM credits needed.
 # Its own --user-data-dir + HERMES_HOME means it never collides with `hgui`.
-pnpm run perf --spawn
+npm run perf -- --spawn
 
 # Or: launch an isolated instance once, attach repeatedly (faster iteration).
-pnpm run perf:serve            # leaves an instance on :9222
-pnpm run perf                  # attaches, runs the CI suite, gates on baseline
+npm run perf:serve            # leaves an instance on :9222
+npm run perf                  # attaches, runs the CI suite, gates on baseline
 
 # One scenario, with a CPU profile:
-pnpm run perf stream --cpuprofile --tokens 800
+npm run perf -- stream --cpuprofile --tokens 800
 
 # Representative PRODUCTION numbers (minified React, not the ~3x-slower dev build):
-pnpm run perf cold-start stream keystroke transcript --spawn --prod
+npm run perf -- cold-start stream keystroke transcript --spawn --prod
 
 # Re-capture the baseline on your reference device, then commit baseline.json:
-pnpm run perf cold-start stream keystroke transcript --spawn --prod --update-baseline
+npm run perf -- cold-start stream keystroke transcript --spawn --prod --update-baseline
 ```
 
 ## Profiling an existing workspace

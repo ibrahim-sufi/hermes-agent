@@ -1,27 +1,40 @@
 import type { MouseTrackingMode, ScrollBoxHandle } from '@hermes/ink'
 import type { Usage } from '@hermes/shared/gateway-events'
+import type { MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react'
+
+import type { PasteEvent } from '../components/textInput.js'
+import type { GatewayClient } from '../gatewayClient.js'
 import type {
   BillingCardInfo,
   BillingMutationResponse,
   BillingStateResponse,
   SessionCloseResponse,
-  SessionInfo,
   SubscriptionPreviewResponse,
   SubscriptionStateResponse,
   SubscriptionUpgradeResponse
-} from '@hermes/shared/gateway-types'
-import type { MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react'
-
-import type { PasteEvent } from '../components/textInput.js'
-import type { GatewayClient } from '../gatewayClient.js'
+} from '../gatewayTypes.js'
 import type { QueueItem } from '../hooks/useQueue.js'
 import type { ParsedVoiceRecordKey } from '../lib/platform.js'
 import type { RpcResult } from '../lib/rpc.js'
 import type { ActiveWidget } from '../sdk/types.js'
 import type { Theme } from '../theme.js'
-import type { ApprovalReq, ClarifyReq, ConfirmReq, DetailsMode, Msg, PanelSection, SecretReq, SectionVisibility, SlashCatalog, SudoReq, VaultCodeReq, VaultSaveLoginReq, VaultUnlockReq } from '../types.js'
+import type {
+  ApprovalReq,
+  ClarifyReq,
+  ConfirmReq,
+  DetailsMode,
+  Msg,
+  PanelSection,
+  SecretReq,
+  SectionVisibility,
+  SessionInfo,
+  SlashCatalog,
+  SudoReq,
+  VaultCodeReq,
+  VaultSaveLoginReq,
+  VaultUnlockReq
+} from '../types.js'
 
-import type { RewindSubmission } from './backtrackStore.js'
 import type { SubmissionDestination } from './submissionDestination.js'
 
 export interface StateSetter<T> {
@@ -296,7 +309,6 @@ export interface OverlayState {
   pager: null | PagerState
   petPicker: boolean
   pluginsHub: boolean
-  rewind: null | RewindOverlay
   secret: null | SecretReq
   vaultCode: null | VaultCodeReq
   vaultSaveLogin: null | VaultSaveLoginReq
@@ -305,31 +317,6 @@ export interface OverlayState {
   skillsHub: boolean
   subscription: SubscriptionOverlayState | null
   sudo: null | SudoReq
-}
-
-/** One earlier user prompt backtrack browsing can return to (`row_id` is its durable message row). */
-export interface RewindTarget {
-  rowId: number
-  text: string
-  /** The last stored row before this prompt (a fork keeps rows through it); absent for the first prompt. */
-  throughRowId?: number
-  turn: number
-}
-
-export interface RewindOverlay {
-  /** Oldest first, as stored. */
-  targets: RewindTarget[]
-  /** The session's transcript rows (the `--tui-native` pager draws these). */
-  messages?: Msg[]
-  /** ↵: put the prompt in the composer and arm a pending edit (nothing is cut yet). */
-  onEdit: (target: RewindTarget) => void
-  onFork: (target: RewindTarget) => void
-  /** Cut back to just before `target` and send `text` (the armed edit's send). */
-  onSubmit: (target: RewindTarget, edit: RewindSubmission | string) => void
-  /** A printable key that is not a browse key: browsing closes and the key is typed into the composer. */
-  onType: (text: string) => void
-  /** Text pasted while browsing: browsing closes and it is pasted into the composer. */
-  onPaste: (text: string) => void
 }
 
 export interface PagerState {
@@ -364,8 +351,6 @@ export interface UiState {
   info: null | SessionInfo
   liveSessionCount: number
   inlineDiffs: boolean
-  // `display.inline_images` isn't off: transcript rows draw (and reserve rows for) their images.
-  inlineImages: boolean
   mouseTracking: MouseTrackingMode
   notice: Notice | null
   pasteCollapseLines: number
@@ -405,33 +390,16 @@ export interface VirtualHistoryState {
 
 export interface ComposerPasteResult {
   cursor: number
-  /**
-   * Re-place this insertion on the composer's live value, which the caller
-   * then writes at once; null once the draft it was made for was edited away.
-   * `view` is the caller's own value and caret, used to keep the caret.
-   */
-  land?: (view?: ComposerView) => ComposerPasteResult | null
-  value: string
-}
-
-export interface ComposerView {
-  caret: number
   value: string
 }
 
 export type MaybePromise<T> = Promise<T> | T
 
 export interface ComposerActions {
-  /** Paste text at the end of the draft as a composer paste would (collapse, path and image detection). */
-  appendPaste: (text: string) => Promise<void>
-  /** Type text at the end of the draft, after any `appendPaste` still resolving. */
-  appendText: (text: string) => void
   /** Pull an image off the system clipboard in as a token. */
   attachClipboardImage: () => void
   /** Attach an image by path in as a token. */
-  attachImagePath: (path: string) => Promise<void> | void
-  /** Attach several images in order to the destination current at the call; stops on any change. */
-  attachImagePaths: (paths: readonly string[], options?: { followTyping?: boolean }) => Promise<void>
+  attachImagePath: (path: string) => void
   clearIn: () => void
   stage?: (text: string, display?: string, destination?: SubmissionDestination, attachments?: QueueItem['attachments']) => QueueItem
   dequeue: (retry?: boolean) => QueueItem | undefined
@@ -440,9 +408,6 @@ export interface ComposerActions {
   openEditor: () => Promise<void>
   prependQueue: (item: QueueItem, destination?: SubmissionDestination) => void
   pushHistory: (text: string) => void
-  /** Put a submitted draft (text with chips + their tokens) back into the same session's empty
-   *  composer; false when the session changed or the composer is in use. */
-  restoreDraft: (display: string, tokens: readonly ComposerToken[], destination: SubmissionDestination) => boolean
   /** Composer text for queue-edit slot `index` (local items first, then server-queued rows). */
   queueDraft: (index: number) => string
   removeQueue: (index: number) => void
@@ -455,10 +420,6 @@ export interface ComposerActions {
   takeQueue: (index: number, editedDisplay?: string) => QueueItem | Promise<QueueItem | undefined> | undefined
   /** Reconcile attached payloads against tokens still present in the text. */
   syncTokens: (value: string) => void
-  /** Fold an expanded paste back into its chip; returns the composer text after the fold. */
-  collapsePaste: (value?: string) => string
-  /** Ctrl+P: expand the paste chip at `cursor` / collapse the expanded one. False = nothing to toggle. */
-  togglePaste: (cursor: number) => boolean
 }
 
 export interface ComposerRefs {
@@ -477,8 +438,6 @@ export interface ComposerState {
   historyIdx: null | number
   input: string
   inputBuf: string[]
-  /** A collapsed paste is expanded inline for editing (Ctrl+P folds it back). */
-  pasteExpanded: boolean
   queueEditIdx: null | number
   queuedDisplay: string[]
   tokens: ComposerToken[]
@@ -499,12 +458,8 @@ export interface UseComposerStateResult {
 export interface InputHandlerActions {
   appendMessage: (msg: Msg) => void
   cancelClarify: () => void
-  /** User prompts in the transcript on screen (gates the backtrack prime hint). */
-  countPrompts: () => number
   die: () => void
   dispatchSubmission: (full: string | QueueItem) => void
-  /** Open backtrack browsing (the `/rewind` command, not echoed or counted as typed). */
-  openBacktrack: () => void
   guardBusySessionSwitch: (what?: string) => boolean
   newSession: (msg?: string, title?: string) => void
   sys: (text: string) => void
@@ -601,15 +556,11 @@ export type SlashHandler = (cmd: string, submission?: SlashSubmission, typed?: b
 export interface SlashHandlerContext {
   composer: {
     attachClipboardImage: () => void
-    attachImagePath: (path: string) => Promise<void> | void
-    appendPaste: ComposerActions['appendPaste']
-    appendText: ComposerActions['appendText']
-    attachImagePaths: ComposerActions['attachImagePaths']
-    enqueue: ComposerActions['enqueue']
+    attachImagePath: (path: string) => void
+    enqueue: (text: string, display?: string) => void
     hasSelection: boolean
     openEditor: () => Promise<void>
     queueRef: MutableRefObject<QueueItem[]>
-    restoreDraft?: ComposerActions['restoreDraft']
     selection: SelectionApi
     setInput: StateSetter<string>
   }
@@ -627,7 +578,7 @@ export interface SlashHandlerContext {
     dieWithCode: (code: number) => void
     guardBusySessionSwitch: (what?: string) => boolean
     newLiveSession: (msg?: string, title?: string) => void
-    newSession: (msg?: string, title?: string) => Promise<unknown> | void
+    newSession: (msg?: string, title?: string) => void
     resetVisibleHistory: (info?: null | SessionInfo) => void
     resumeById: (id: string) => Promise<void> | void
     setSessionStartedAt: StateSetter<number>
@@ -651,7 +602,6 @@ export interface SlashHandlerContext {
 
 export interface AppLayoutActions {
   answerApproval: (choice: string) => void
-  answerApprovalTell: (text: string) => void
   answerClarifyQuestion: (qid: string, answer: string) => void
   answerSecret: (value: string) => void
   answerSudo: (pw: string) => void
@@ -678,8 +628,6 @@ export interface AppLayoutComposerProps {
   input: string
   inputBuf: string[]
   pagerPageSize: number
-  /** null = no paste chip in the composer; else whether one is expanded for editing. */
-  pasteHint: null | 'collapse' | 'expand'
   queueEditIdx: null | number
   queuedDisplay: string[]
   submit: (value: string) => void
@@ -725,7 +673,6 @@ export interface AppOverlaysProps {
   compIdx: number
   completions: CompletionItem[]
   onApprovalChoice: (choice: string) => void
-  onApprovalTell: (text: string) => void
   onClarifyCancel: () => void
   onClarifyQuestionAnswer: (qid: string, value: string) => void
   onActiveSessionSelect: (sessionId: string) => void

@@ -185,7 +185,7 @@ def lazy_installs_allowed() -> bool:
     try:
         from hermes_cli.config import cfg_get, load_config_readonly, require_readable_config_before_write
     except ModuleNotFoundError as exc:
-        return exc.name == "hermes_cli.config" or "hermes_cli.config".startswith(f"{exc.name}.")
+        return exc.name in {"hermes_cli", "hermes_cli.config"}
     except ImportError:
         return False
     try:
@@ -629,24 +629,19 @@ def env_for(*names: str, base_env: Optional[dict] = None) -> dict[str, str]:
     never raises on missing packages — they contribute nothing."""
     lockfile = _lockfile()
     target = current_target()
-    known = []
+    diffs: list[dict] = []
     for name in names:
         try:
-            walk([name])
+            chain = walk([name])
         except KeyError:
             continue
-        known.append(name)
-    diffs: list[dict] = []
-    # One deps-first walk over every name: walking each name alone repeats a shared
-    # dependency after an earlier dependent (node after npm, again for pnpm), and the
-    # repeat would put node's bundled npm ahead of the pinned one on PATH.
-    for package in walk(known):
-        if package.internal:
-            continue
-        location = _installed_location(package, lockfile, target)
-        if location:
-            facts, store = location
-            diffs.append(facts.env_for(package.name, store.root))
+        for package in chain:
+            if package.internal:
+                continue
+            location = _installed_location(package, lockfile, target)
+            if location:
+                facts, store = location
+                diffs.append(facts.env_for(package.name, store.root))
     return compose_env(diffs, base=base_env)
 
 

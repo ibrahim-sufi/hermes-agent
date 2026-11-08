@@ -38,7 +38,7 @@ def test_desktop_build_reaches_the_managed_payload_with_commit_ref(tmp_path, mon
     lock = Lockfile(repo / "pm/lock.json")
     store = request.cache / "tools"
     binaries = {}
-    for name in ("python", "node", "pnpm"):
+    for name in ("python", "node", "npm"):
         package = get_package(name)
         version = lock.version(name)
         assert version is not None

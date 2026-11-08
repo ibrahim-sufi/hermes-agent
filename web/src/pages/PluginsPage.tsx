@@ -4,7 +4,6 @@ import type { Translations } from "@/i18n/types";
 import { Link } from "react-router";
 import { api } from "@/lib/api";
 import { runDashboardPluginUpdate } from "@/lib/plugin-update";
-import { InstalledPluginsHeader } from "@/pages/PluginsPage_updateAll";
 import { setupHasDetails, setupHasInstallableSteps } from "@/lib/memory-provider-setup";
 import type {
   CatalogEntry,
@@ -932,7 +931,9 @@ export default function PluginsPage() {
 
         <div className="flex flex-col gap-3">
 
-          <InstalledPluginsHeader pluginCount={rows.length} {...{ loading, loadHub, showToast, t }} />
+          <h3 className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary">
+            {t.pluginsPage.pluginListHeading}
+          </h3>
 
           {loading ? (
 

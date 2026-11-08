@@ -1,5 +1,3 @@
-import { type CanonicalRoomLive, canonicalRoomLiveKey } from './canonical-group-details'
-import type { GatewayGroupRoom } from './canonical-group-registry'
 import { botActivitySession } from './data'
 import { botRosterKey, filterBots, preferReachableSameNameRows } from './data'
 import type { $groupChats } from './group-chat'
@@ -25,41 +23,9 @@ export interface RosterGroupRow {
   active: boolean
   activity: number
   kind: 'group'
-  /** Set for a gateway-owned room; absent for a Desktop-driven one. */
-  gateway?: GatewayGroupRoom
   members: GroupMember[]
   name: string
   pinned: boolean
-}
-
-/** Gateway Group Chats as roster rows. They live on the active source, so a
- *  gateway filter naming another source hides them. */
-function gatewayGroupRows(
-  { gatewayRooms: rooms, gatewayRoomLive, query, gatewayFilter, rowKindFilter, activityFilter }: RosterRowsInput
-): RosterGroupRow[] {
-  if (rowKindFilter === 'bots' || (gatewayFilter !== 'all' && rooms[0]?.binding.connectionId !== gatewayFilter)) {
-    return []
-  }
-
-  const needle = query.trim().toLowerCase().replace(/^@/, '')
-
-  return rooms
-    .filter(room => !needle || room.name.toLowerCase().includes(needle) ||
-      room.members.some(member => `${member.handle} ${member.display_name ?? ''}`.toLowerCase().includes(needle)))
-    .map((room): RosterGroupRow => ({
-      kind: 'group',
-      gateway: room,
-      name: room.name,
-      members: [],
-      pinned: false,
-      activity: room.updatedAt,
-      active: gatewayRoomActive(room, gatewayRoomLive[canonicalRoomLiveKey(room.binding, room.binding.roomId)])
-    }))
-    .filter(row => rosterActivityMatches(row, activityFilter))
-}
-
-function gatewayRoomActive(room: GatewayGroupRoom, live: CanonicalRoomLive | undefined): boolean {
-  return Boolean(live?.working || live?.needsYou) || Boolean(room.updatedAt && Date.now() - room.updatedAt <= ACTIVE_WINDOW_S * 1000)
 }
 
 interface RosterRowsInput {
@@ -70,16 +36,13 @@ interface RosterRowsInput {
   activityFilter: RosterActivityFilter
   rowKindFilter: RosterKindFilter
   groupRooms: ReturnType<typeof $groupChats.get>
-  gatewayRooms: GatewayGroupRoom[]
-  gatewayRoomLive: Record<string, CanonicalRoomLive>
   activeRosterKeys: Set<string>
   gatewayOptions: ReturnType<typeof rosterGatewayOptions>
   activityOf: (bot: RosterRow) => number
   isPinned: (bot: RosterRow) => boolean
 }
 
-export function deriveRosterRows(input: RosterRowsInput) {
-  const {
+export function deriveRosterRows({
   roster,
   allMeta,
   gatewayFilter,
@@ -87,13 +50,11 @@ export function deriveRosterRows(input: RosterRowsInput) {
   activityFilter,
   rowKindFilter,
   groupRooms,
-  gatewayRooms,
   activeRosterKeys,
   gatewayOptions,
   activityOf,
   isPinned
-  } = input
-
+}: RosterRowsInput) {
   const activeSourceRoster = roster.filter(bot => !bot.remoteSource)
   // Hidden rows remain fully alive and recoverable at the bottom. Every
   // non-display consumer continues to receive the complete roster.
@@ -143,7 +104,6 @@ export function deriveRosterRows(input: RosterRowsInput) {
         ) || row.members.some(member => activeRosterKeys.has(botRosterKey(member)))
     }))
     .filter(row => rowKindFilter !== 'bots' && rosterActivityMatches(row, activityFilter))
-    .concat(gatewayGroupRows(input))
 
   const botRows =
     rowKindFilter === 'groups'
@@ -166,7 +126,7 @@ export function deriveRosterRows(input: RosterRowsInput) {
     hiddenBots,
     visibleRoster,
     filteredHiddenBots,
-    groupNames: [...groupNames, ...gatewayRooms.map(room => room.name)],
+    groupNames,
     rosterRows,
     sortedGroupRows,
     gatewaySections,

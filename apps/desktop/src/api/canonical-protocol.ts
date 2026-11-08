@@ -1,7 +1,5 @@
-// Canonical session authority wire adapter, for private native dials and remote owners
-// advertising session_authority in gateway.ready. Remote legacy servers keep their
-// existing protocol; wire negotiation never changes the transport's auth credentials.
-// Unsupported explicit semantics fail before network admission.
+// Canonical local authority wire adapter. Remote legacy transports keep their
+// existing protocol; unsupported explicit semantics fail before network admission.
 
 import { randomUuid } from '@hermes/shared'
 
@@ -56,25 +54,18 @@ export const canonicalOwnerProfile = (value: object): string | undefined => cano
 export const recordCanonicalOwner = (value: object, profile: string): void => { canonicalOwners.set(value, profile) }
 
 // Mirrors hermes_cli/gateway_mutations.slash_mutation: the typed directives
-// that are canonical mutations, not gateway-executed slash commands. `--provider`
-// (and `--session`) map onto the model mutation like the picker's value; other
-// model flags (--global/--once/--refresh) have no canonical mutation and stay on
-// the exec path so the authority refuses them explicitly.
+// that are canonical mutations, not gateway-executed slash commands. Model
+// flags (--global/--once/--refresh) have no canonical mutation and stay on the
+// exec path so the authority refuses them explicitly.
 export function slashMutation(command: string): { operation: string; payload: Record<string, unknown> } | null {
   const [name, ...rest] = command.trim().replace(/^\/+/, '').split(/\s+/)
   const arg = rest.join(' ').trim()
 
   if (name === 'model') {
-    // The server parses flags in any order, and `--session` is a no-op on the always
-    // session-scoped mutation; one that is `--provider`'s value stays for the parser to refuse.
-    const [model, ...flags] = rest.filter((token, i) => token !== '--session' || rest[i - 1] === '--provider')
+    if (!arg || arg.startsWith('-') || /(^|\s)--/.test(arg)) { return null }
+    const [model, ...flags] = arg.split(/\s+/)
 
-    if (!model || model.startsWith('-')) { return null }
-
-    if (!flags.length) { return { operation: 'model', payload: { model } } }
-    const pick = pickerModelMutation([model, ...flags].join(' '))
-
-    return pick ? { operation: 'model', payload: pick } : null
+    return flags.length ? null : { operation: 'model', payload: { model } }
   }
 
   const field = ({ branch: 'title', compress: 'focus' } as Record<string, string>)[name]

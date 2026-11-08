@@ -1,5 +1,4 @@
 import { TERMUX_TUI_MODE } from '../config/env.js'
-import { INLINE_IMAGE_MAX_ROWS } from '../config/limits.js'
 import type { Msg } from '../types.js'
 
 import { transcriptBodyWidth } from './inputMetrics.js'
@@ -67,41 +66,12 @@ export const wrappedLines = (text: string, width: number, maxLines: number = MAX
   return n
 }
 
-// Until an image row mounts and Yoga measures it, assume full-height images,
-// unless `display.inline_images` is off and none will draw. A row's
-// attachments sit under its text after a one-row gap.
-const imageRows = (msg: Msg, inlineImages: boolean) =>
-  inlineImages && msg.images?.length ? 1 + msg.images.length * INLINE_IMAGE_MAX_ROWS : 0
-
-// Rows whose height doesn't depend on wrapped text; null for the rest.
-const fixedKindHeight = (msg: Msg, leadGap: boolean, inlineImages: boolean): null | number => {
-  if (msg.kind === 'intro') {
-    return msg.info?.version ? 9 : 5
-  }
-
-  if (msg.kind === 'panel') {
-    return Math.max(3, (msg.panelData?.sections.length ?? 1) * 2 + 1)
-  }
-
-  if (msg.kind === 'trail' && msg.todos?.length) {
-    return msg.todoCollapsedByDefault ? 2 : Math.max(2, msg.todos.length + 2)
-  }
-
-  // A tool's image: no text line and no gap above it, only its group boundary.
-  if (msg.kind === 'image') {
-    return inlineImages ? (msg.images?.length ?? 0) * INLINE_IMAGE_MAX_ROWS + (leadGap ? 1 : 0) : 0
-  }
-
-  return null
-}
-
 export const estimatedMsgHeight = (
   msg: Msg,
   cols: number,
   {
     compact,
     details,
-    inlineImages = true,
     leadGap = false,
     thinkingVisible = details,
     thinkingExpanded = thinkingVisible,
@@ -111,7 +81,6 @@ export const estimatedMsgHeight = (
   }: {
     compact: boolean
     details: boolean
-    inlineImages?: boolean
     leadGap?: boolean
     thinkingExpanded?: boolean
     thinkingVisible?: boolean
@@ -120,10 +89,20 @@ export const estimatedMsgHeight = (
     withSeparator?: boolean
   }
 ) => {
-  const fixed = fixedKindHeight(msg, leadGap, inlineImages)
+  if (msg.kind === 'intro') {
+    return msg.info?.version ? 9 : 5
+  }
 
-  if (fixed !== null) {
-    return fixed
+  if (msg.kind === 'panel') {
+    return Math.max(3, (msg.panelData?.sections.length ?? 1) * 2 + 1)
+  }
+
+  if (msg.kind === 'trail' && msg.todos?.length) {
+    if (msg.todoCollapsedByDefault) {
+      return 2
+    }
+
+    return Math.max(2, msg.todos.length + 2)
   }
 
   const bodyWidth = transcriptBodyWidth(cols, msg.role, userPrompt, TERMUX_TUI_MODE)
@@ -154,8 +133,6 @@ export const estimatedMsgHeight = (
       }
     }
   }
-
-  h += imageRows(msg, inlineImages)
 
   if (msg.role === 'user' || msg.kind === 'diff') {
     // Top + bottom blank line.

@@ -13,7 +13,7 @@ export const enSkillDeepLink: SkillDeepLinkCopy = {
 }
 
 export const enGatewayGroupOpen: GatewayGroupOpenCopy = {
-  opening: 'Opening group chat…',
+  opening: 'Opening gateway group…',
   lookupFailed: 'Could not look up this group on the gateway. Try again.',
-  missing: 'This group chat no longer exists.'
+  missing: 'This gateway group no longer exists.'
 }

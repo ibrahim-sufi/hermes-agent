@@ -1,9 +1,6 @@
 import type { GatewayClient } from '../gatewayClient.js'
 
 import { asRpcResult } from './rpc.js'
-import { detectTerminalGraphics } from './terminalGraphics.js'
-
-const TERMINAL = detectTerminalGraphics()
 
 export interface PetMetaResult {
   enabled?: boolean
@@ -67,9 +64,7 @@ export async function requestPetUpdate<TCells>(
       return { cells: null, meta }
     }
 
-    const cells = asRpcResult(
-      await gateway.request('pet.cells', { graphics, state, terminal: TERMINAL })
-    ) as TCells | null
+    const cells = asRpcResult(await gateway.request('pet.cells', { graphics, state })) as TCells | null
 
     return { cells, meta }
   } catch {

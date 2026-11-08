@@ -1,19 +1,14 @@
 """Store submission control for the release pipeline.
 
-The green run uploads the verified ``.msixbundle`` and leaves the submission an
-uncommitted draft set to ``targetPublishMode: "Immediate"``, so nothing a
-customer sees changes and nothing reaches certification before the release
-gate. The publication pass, which runs only when the release really goes out,
-commits that draft; it goes live by itself as soon as it passes certification.
-The draft cannot be committed held and released later: Microsoft documents no
-call that releases a held submission, and update refuses a committed one
-(409 ``InvalidState``, "Cannot update the submission because it is in the
-state 'PreProcessing'", v0.22.7), so a held submission needed Publish now by
-hand. Setting the repository variable ``MS_STORE_HOLD`` to ``true`` opts back
-into that: the publication pass commits the draft ``Manual``, so it is
-certified and then waits for Publish now in Partner Center. A committed held
-submission from before this change still gets that Publish now instruction.
-Both entry points are safe to rerun.
+The green run submits the verified ``.msixbundle`` with auto-publish off
+(``targetPublishMode: "Manual"``) and commits it, so certification runs before
+the release gate and nothing a customer sees changes. The publication pass,
+which runs only when the release really goes out, tries to switch that held
+submission to ``Immediate`` and commit it again so it goes live by itself.
+Microsoft documents no call that releases a held submission and does not say
+whether update accepts a committed one; when it refuses (409), publication
+prints a Publish now instruction instead, which is the manual step this
+replaces. Both entry points are safe to rerun.
 
 Green run — ``python -m scripts.releases.store submit <package>`` (Windows
 runner, ``msstore`` CLI configured beforehand by
@@ -29,10 +24,10 @@ runner, ``msstore`` CLI configured beforehand by
    "Disables committing the submission, keeping it in draft state").
 4. ``msstore submission get <productId>`` — the complete draft JSON.
 5. ``msstore submission update <productId> <json>`` — the same JSON with
-   ``targetPublishMode: "Immediate"`` and the claim tag in ``notesForCertification``.
+   ``targetPublishMode: "Manual"`` and the claim tag in ``notesForCertification``.
    Existing certification instructions are preserved. For MSIX apps the CLI
    sends the complete submission JSON, setting packages and publish mode at once.
-   The draft is not committed here; the publication pass commits it.
+6. ``msstore submission publish <productId>`` — commits; certification starts.
 
 Publication pass — ``scripts.releases.store.release(...)`` (Ubuntu runner,
 Partner Center submission REST API, stdlib ``urllib`` only):
@@ -42,16 +37,14 @@ Partner Center submission REST API, stdlib ``urllib`` only):
    ``https://manage.devcenter.microsoft.com/.default`` (the same MS_STORE_*
    credentials the CLI uses).
 2. ``GET https://manage.devcenter.microsoft.com/v1.0/my/applications/{id}`` —
-   ``pendingApplicationSubmission.id`` names the pending submission.
+   ``pendingApplicationSubmission.id`` names the held submission.
 3. ``GET .../submissions/{id}`` — it must carry this release's Store bundle
    (``applicationPackages[].fileName``); a submission from a newer green run
    is left alone.
-4. ``PUT .../submissions/{id}`` with ``targetPublishMode: "Immediate"`` (``"Manual"``
-   when ``MS_STORE_HOLD`` is ``true``), then ``POST .../submissions/{id}/commit``;
-   certification starts and the build goes live once it passes (held builds wait
-   for Publish now). A 409 from either (a committed held submission) means the
-   API will not change it: publication warns with the Publish now step and stays
-   green. A live submission is a no-op.
+4. ``PUT .../submissions/{id}`` with ``targetPublishMode: "Immediate"``, then
+   ``POST .../submissions/{id}/commit``. A 409 from either means the API will
+   not change a committed submission: publication warns with the Publish now
+   step and stays green. A live submission is a no-op.
 
 Sources for the commands and fields above:
 - msstore CLI commands and options (``submission get/update/publish/delete
@@ -162,8 +155,7 @@ def _is_abandoned(claim_tag: str) -> bool:
 
 def submit(package: str, *, product_id: str, claim_tag: str | None = None,
            is_abandoned: Callable[[str], bool] | None = None, run=_cli_run) -> dict:
-    """Upload an uncommitted Immediate draft; replace a committed predecessor only after its
-    claim was abandoned. The publication pass commits the draft."""
+    """Submit held; replace a committed predecessor only after its claim was abandoned."""
     from scripts.releases.versioning import parse_attempt_ref
 
     if claim_tag is not None and parse_attempt_ref(claim_tag) is None:
@@ -183,7 +175,7 @@ def submit(package: str, *, product_id: str, claim_tag: str | None = None,
                          "without an owner record needs manual cleanup in Partner Center")
     run(["msstore", "publish", package, "--appId", product_id, "--noCommit"])
     submission = _submission(run(["msstore", "submission", "get", product_id]))
-    submission[_key(submission, "targetPublishMode") or "TargetPublishMode"] = "Immediate"
+    submission[_key(submission, "targetPublishMode") or "TargetPublishMode"] = "Manual"
     notes = _notes(submission)
     if claim_tag is not None:
         notes["claimTag"] = claim_tag
@@ -193,7 +185,8 @@ def submit(package: str, *, product_id: str, claim_tag: str | None = None,
     submission[_key(submission, "notesForCertification") or "notesForCertification"] = json.dumps(notes)
     run(["msstore", "submission", "update", product_id,
          json.dumps(submission, separators=(",", ":"))])
-    return {"productId": product_id, "targetPublishMode": "Immediate", "committed": False}
+    run(["msstore", "submission", "publish", product_id])
+    return {"productId": product_id, "targetPublishMode": "Manual"}
 
 
 def _http_run(request: dict) -> dict:
@@ -241,10 +234,8 @@ class _Refused(StoreError):
 
 
 def release(*, product_id: str, store_file: str, tenant_id: str, client_id: str,
-            client_secret: str, hold: bool = False, run=_http_run) -> str:
-    """Commit this release's Store draft as ``Immediate`` so it goes live once certified.
-
-    ``hold`` commits it ``Manual`` instead: it is certified, then waits for Publish now.
+            client_secret: str, run=_http_run) -> str:
+    """Switch this release's held Store submission to ``Immediate`` and commit it.
 
     ``store_file`` is the Store bundle the release's candidate manifest names; a
     submission that does not carry it belongs to another green run and is left alone.
@@ -259,7 +250,7 @@ def release(*, product_id: str, store_file: str, tenant_id: str, client_id: str,
         response = run(request)
         if response["status"] == 409 and method != "GET":
             raise _Refused(f"{method} {path}: {response['body']}")
-        if not 200 <= response["status"] < 300:
+        if response["status"] != 200:
             raise StoreError(f"{method} {path} failed: {response['status']} {response['body']}")
         return response["body"]
 
@@ -285,35 +276,19 @@ def release(*, product_id: str, store_file: str, tenant_id: str, client_id: str,
                 "green run replaced it, and that release's publication releases it.")
         return "superseded"
     mode_key = _key(submission, "targetPublishMode") or "targetPublishMode"
-    target = "Manual" if hold else "Immediate"
-    publish_now = "Once it is certified, select Publish now in Partner Center."
-    current = submission.get(mode_key)
-    if current == target and state in _COMMITTED:
-        if hold:
-            _notice(f"Store submission {pending} is held (MS_STORE_HOLD). {publish_now}")
-            return "held"
+    if submission.get(mode_key) == "Immediate" and state in _COMMITTED:
         return "already-immediate"
-    submission[mode_key] = target
+    submission[mode_key] = "Immediate"
     try:
         call("PUT", path, submission)
         call("POST", f"{path}/commit")
     except _Refused as refused:
-        # Nothing new was committed, so the committed mode decides: only Manual needs Publish now.
-        if current == "Immediate" and state in _COMMITTED:
-            _notice(f"Store submission {pending} stays as it was: the submission API refused to "
-                    f"switch it to {target} ({refused}). It was committed with auto-publish on, "
-                    "so it goes live by itself once it is certified; MS_STORE_HOLD cannot hold "
-                    "a submission that is already committed.")
-            return "already-immediate"
-        _notice(f"Store submission {pending} stays as it was: the submission API refused to switch "
-                f"it to {target} ({refused}). {publish_now}")
+        _notice(f"Store submission {pending} stays held: the submission API refused to switch it "
+                f"to Immediate ({refused}). Once it is certified, select Publish now in Partner Center.")
         return "held"
     after = call("GET", f"{path}/status").get("status")
     if after in _FAILED:
         raise StoreError(f"Store submission {pending} is {after} after commit")
-    if hold:
-        _notice(f"Store submission {pending} is committed held (MS_STORE_HOLD). {publish_now}")
-        return "held"
     return "immediate"
 
 
@@ -332,7 +307,7 @@ def store_bundle(manifest: dict) -> str:
 
 
 def release_from_env(env: dict, manifest: dict, run=_http_run) -> str:
-    """Commit the Store draft for ``manifest`` when the environment configures the Store."""
+    """Release the held Store submission for ``manifest`` when the environment configures the Store."""
     product_id = env.get("MS_STORE_PRODUCT_ID")
     if not product_id:
         print("Store release skipped: MS_STORE_PRODUCT_ID is not configured.",
@@ -344,7 +319,6 @@ def release_from_env(env: dict, manifest: dict, run=_http_run) -> str:
         tenant_id=env["MS_STORE_TENANT_ID"],
         client_id=env["MS_STORE_CLIENT_ID"],
         client_secret=env["MS_STORE_CLIENT_SECRET"],
-        hold=(env.get("MS_STORE_HOLD") or "").strip().lower() == "true",
         run=run,
     )
 

@@ -1,5 +1,4 @@
 import type { DesktopRegistryConnection } from '@/global'
-import { hostHas } from '@/lib/host-capabilities'
 
 import { normalizeGatewayUrl } from './connections-registry'
 
@@ -24,10 +23,9 @@ export async function reconnectMovedCloudAgent(
 ): Promise<boolean> {
   const connections = desktop.connections
 
-  // Only native Desktop signs in to a Cloud agent (the Webapp's sign-out and
-  // sign-in are its own gateway's). Do not log anything out while attempting a
-  // reconnect whose new ownership cannot be signed in or saved.
-  if (!connections || !hostHas('gatewayManagement')) {
+  // Browser-hosted Desktop has no native registry. Do not log it out while
+  // attempting a reconnect whose new ownership cannot be saved.
+  if (!connections) {
     return false
   }
 

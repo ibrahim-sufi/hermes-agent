@@ -11,9 +11,9 @@
 #   scripts/dev-sandbox.sh python -m hermes_cli.main
 #   scripts/dev-sandbox.sh hermes desktop
 #   scripts/dev-sandbox.sh electron .
-#   scripts/dev-sandbox.sh -- pnpm run dev   # from apps/desktop/
+#   scripts/dev-sandbox.sh -- npm run dev   # from apps/desktop/
 #   scripts/dev-sandbox.sh --persistent hermes desktop
-#   scripts/dev-sandbox.sh --persistent -- pnpm run dev
+#   scripts/dev-sandbox.sh --persistent -- npm run dev
 #
 # Seed the sandbox HERMES_HOME from an existing directory (e.g. your main
 # ~/.hermes) so config, sessions, skills, etc. are pre-populated:
@@ -65,7 +65,7 @@ Examples:
   $ENTRYPOINT hermes desktop
   $ENTRYPOINT --persistent hermes desktop
   $ENTRYPOINT --from ~/.hermes hermes desktop
-  $ENTRYPOINT -- pnpm run dev
+  $ENTRYPOINT -- npm run dev
 EOF
 }
 
