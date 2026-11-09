@@ -6,10 +6,9 @@ import path from 'node:path'
 const repo = process.argv[2],
   out = process.argv[3],
   scenario = process.argv[4] || 'approved'
-// esbuild and Playwright come from the desktop workspace that declares them.
-const require = createRequire(path.join(repo, 'apps/desktop/package.json'))
+const require = createRequire(path.join(repo, 'package.json'))
 const { build } = require('esbuild')
-const { chromium } = require('@playwright/test')
+const { chromium } = require('playwright')
 const requests = []
 const rpcCalls = []
 const nativeCalls = []
@@ -65,8 +64,7 @@ import {setApiRequestProfile,setApiRequestConnection} from '${repo}/apps/desktop
 setApiRequestProfile('profile-b');setApiRequestConnection('fixture-remote');
 const queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}});function Probe(){const [profile,setProfile]=React.useState('profile-b');const [shown,setShown]=React.useState(true);window.cancelFlow=()=>setProfile('profile-c');window.unmountFlow=()=>setShown(false);return <QueryClientProvider client={queryClient}>{shown && <McpTab gateway={null} profile={{connectionId:'fixture-remote',profile}} />}</QueryClientProvider>};createRoot(document.getElementById('root')).render(<Probe/>);`
 const bundle = await build({
-  // The probe's bare imports (react, react-query) resolve like the desktop's own sources.
-  stdin: { contents: entry, resolveDir: path.join(repo, 'apps/desktop'), loader: 'tsx' },
+  stdin: { contents: entry, resolveDir: repo, loader: 'tsx' },
   bundle: true,
   write: false,
   format: 'esm',

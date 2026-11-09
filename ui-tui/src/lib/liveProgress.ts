@@ -22,10 +22,8 @@ const isBarrierMessage = (msg: Msg | undefined) => {
     return true
   }
 
-  // Assistant text, user input, intro/panel rows all terminate the shelf, and
-  // so do diffs and tool images: each hangs under the call that made it, so a
-  // later call must open a new shelf below it, not merge into the one above.
-  if (msg.kind === 'intro' || msg.kind === 'panel' || msg.kind === 'diff' || msg.kind === 'image') {
+  // Assistant text, user input, intro/panel rows all terminate the shelf.
+  if (msg.kind === 'intro' || msg.kind === 'panel' || msg.kind === 'diff') {
     return true
   }
 

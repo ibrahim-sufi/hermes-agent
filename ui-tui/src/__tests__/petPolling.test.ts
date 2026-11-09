@@ -41,8 +41,7 @@ describe('requestPetUpdate', () => {
     expect(request).toHaveBeenNthCalledWith(1, 'pet.info.meta')
     expect(request).toHaveBeenNthCalledWith(2, 'pet.cells', {
       graphics: false,
-      state: 'review',
-      terminal: expect.stringMatching(/^(kitty|unicode)$/)
+      state: 'review'
     })
   })
 

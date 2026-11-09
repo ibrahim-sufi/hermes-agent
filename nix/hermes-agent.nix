@@ -33,6 +33,7 @@
   uv2nix,
   pyproject-nix,
   pyproject-build-systems,
+  npm-lockfile-fix,
   # nix/pm-packages.nix output: every pm/lock.json pin as a derivation.
   pmPackages,
   # Locked git revision of the flake source — embedded so banner.py can
@@ -116,7 +117,7 @@ let
   };
 
   hermesNpmLib = callPackage ./lib.nix {
-    inherit pmPackages;
+    inherit npm-lockfile-fix pmPackages;
   };
 
   hermesTui = callPackage ./tui.nix {
@@ -432,8 +433,6 @@ stdenv.mkDerivation (finalAttrs: {
       devDeps =
         runtimeDeps
         ++ [
-          # The pnpm the builds install with: the pm/lock.json pin.
-          hermesNpmLib.pnpm
           pmPackages.uv
           devVenv
           pm

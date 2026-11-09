@@ -1,9 +1,6 @@
 {
   "name": "web",
   "private": true,
-  "engines": {
-    "npm": "npm is refused here: run pnpm install --frozen-lockfile at the repository root"
-  },
   "version": "0.0.0",
   "type": "module",
   "scripts": {
@@ -11,14 +8,14 @@
     "build": "node ../scripts/build/web.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "fix": "pnpm run lint:fix",
+    "fix": "npm run lint:fix",
     "preview": "vite preview",
     "typecheck": "tsc -b . --noEmit",
     "test": "vitest run",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run lint"
+    "check": "npm run typecheck && npm run test && npm run lint"
   },
   "dependencies": {
-    "@hermes/shared": "workspace:*",
+    "@hermes/shared": "file:../apps/shared",
     "@nous-research/ui": "0.19.1",
     "@observablehq/plot": "0.6.17",
     "@react-three/fiber": "9.8.1",

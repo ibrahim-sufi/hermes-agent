@@ -56,9 +56,12 @@ _LEDGER_LOCK = threading.Lock()
 def install_id(project_root: Optional[Path] = None) -> str:
     """Stable 12-hex identifier for THIS install (derived from its path)."""
     if project_root is None:
-        from hermes_cli._startup_fast import project_root_str
+        try:
+            from hermes_constants import PROJECT_ROOT as _root
 
-        project_root = Path(project_root_str())
+            project_root = Path(_root)
+        except Exception:
+            project_root = Path(__file__).resolve().parent.parent
     try:
         canonical = str(Path(project_root).resolve()).lower()
     except OSError:

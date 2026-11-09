@@ -1,4 +1,4 @@
-import { isGatewayReauthRequired, isStableOpen, LOCAL_CONNECTION_ID, reconnectBackoffDelayMs } from '@hermes/shared'
+import { isGatewayReauthRequired, isStableOpen, reconnectBackoffDelayMs } from '@hermes/shared'
 
 import type { HermesTerminalExit, HermesTerminalSession, HermesTerminalState } from '@/global'
 
@@ -10,17 +10,13 @@ type DataListener = Parameters<TerminalApi['onData']>[1]
 interface SavedTerminal {
   terminalId: string
   profile: string | null
-  /** The gateway the shell runs on. Saved before relayed gateways existed: the serving one. */
-  connectionId?: string
 }
 
 interface BrowserTerminalOptions {
   basePath: string
   currentProfile: () => string | null
-  /** The gateway a new terminal starts on; the terminal keeps it for every later dial. */
-  currentConnection: () => string
-  websocketUrl: (profile: string | null, connectionId: string) => Promise<string>
-  defaultCwd: (profile: string | null, connectionId: string) => Promise<string>
+  websocketUrl: (profile: string | null) => Promise<string>
+  defaultCwd: (profile: string | null) => Promise<string>
   /** The tab's sign-in ended (a 4401 close or a 401 ticket): show the sign-in view. */
   onSignedOut?: () => void
 }
@@ -29,7 +25,6 @@ interface TerminalState {
   id: string
   restoreKey?: string
   profile: string | null
-  connectionId: string
   terminalId?: string
   cwd: string
   shell: string
@@ -87,7 +82,7 @@ function sendResumeSize(socket: WebSocket, state: TerminalState, trimmed?: boole
 }
 
 async function closeSavedShell(saved: SavedTerminal, websocketUrl: BrowserTerminalOptions['websocketUrl']): Promise<boolean> {
-  const url = new URL(await websocketUrl(saved.profile, saved.connectionId ?? LOCAL_CONNECTION_ID))
+  const url = new URL(await websocketUrl(saved.profile))
   url.searchParams.set('attach', saved.terminalId)
   url.searchParams.set('action', 'close')
   const socket = new WebSocket(url)
@@ -142,7 +137,7 @@ async function dialTerminal(state: TerminalState, context: DialContext): Promise
   const { stopSocket, emitData, setStatus, forget, finish, reconnect } = context
   stopSocket(state)
   const generation = ++state.generation
-  const url = new URL(await context.websocketUrl(state.profile, state.connectionId))
+  const url = new URL(await context.websocketUrl(state.profile))
 
   if (generation !== state.generation || context.isPaused() || state.stopped) {
     throw new TerminalConnectionError('Terminal attachment cancelled')
@@ -215,11 +210,7 @@ async function dialTerminal(state: TerminalState, context: DialContext): Promise
             replayNext = true
 
             if (state.restoreKey) {
-              writeJson(context.storageKey(state.restoreKey), {
-                terminalId: state.terminalId,
-                profile: state.profile,
-                connectionId: state.connectionId
-              })
+              writeJson(context.storageKey(state.restoreKey), { terminalId: state.terminalId, profile: state.profile })
             }
 
             if (resuming) {
@@ -306,8 +297,7 @@ export function createBrowserTerminal(options: BrowserTerminalOptions): Terminal
     const saved = key ? readJson<SavedTerminal>(storageKey(key)) : null
 
     return saved && typeof saved.terminalId === 'string' && saved.terminalId.length > 0 &&
-      (saved.profile === null || typeof saved.profile === 'string') &&
-      (saved.connectionId === undefined || typeof saved.connectionId === 'string') ? saved : null
+      (saved.profile === null || typeof saved.profile === 'string') ? saved : null
   }
 
   const forget = (state: Pick<TerminalState, 'restoreKey'> & { terminalId?: string }) => {
@@ -423,12 +413,7 @@ export function createBrowserTerminal(options: BrowserTerminalOptions): Terminal
     stopSocket(state)
 
     try {
-      if (state.terminalId) {
-        await closeSavedShell(
-          { terminalId: state.terminalId, profile: state.profile, connectionId: state.connectionId },
-          options.websocketUrl
-        )
-      }
+      if (state.terminalId) {await closeSavedShell({ terminalId: state.terminalId, profile: state.profile }, options.websocketUrl)}
     } catch (error) {
       finish(state, 'disconnected')
       throw error
@@ -549,7 +534,6 @@ export function createBrowserTerminal(options: BrowserTerminalOptions): Terminal
         id: `browser-${Date.now().toString(36)}-${++sequence}`,
         restoreKey: startOptions?.restoreKey,
         profile: saved ? saved.profile : options.currentProfile(),
-        connectionId: saved ? (saved.connectionId ?? LOCAL_CONNECTION_ID) : options.currentConnection(),
         terminalId: saved?.terminalId,
         cwd: startOptions?.cwd || '', shell: 'host-shell',
         cols: Math.max(2, Math.round(startOptions?.cols || 80)),
@@ -562,7 +546,7 @@ export function createBrowserTerminal(options: BrowserTerminalOptions): Terminal
       terminals.set(state.id, state)
       state.started = (async () => {
         if (!state.cwd && !saved) {
-          state.cwd = await options.defaultCwd(state.profile, state.connectionId).catch(() => '')
+          state.cwd = await options.defaultCwd(state.profile).catch(() => '')
         }
 
         return dial(state)

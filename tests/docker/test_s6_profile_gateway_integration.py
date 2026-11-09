@@ -13,10 +13,9 @@ hooks land.
 
 Every ``docker exec`` here runs as the unprivileged ``hermes`` user
 (via :func:`docker_exec` in conftest); see the conftest module
-docstring. The gateway scandir ``/run/hermes-service`` is created
-hermes-owned by the ``02-reconcile-profiles`` cont-init.d script and
-watched by a hermes s6-svscan, so register/unregister operations work
-under UID 10000 while the root ``/run/service`` stays root-owned.
+docstring. ``/run/service`` is chowned hermes-writable by the
+``02-reconcile-profiles`` cont-init.d script, so register/unregister
+operations work correctly under UID 10000.
 """
 from __future__ import annotations
 
@@ -40,7 +39,7 @@ def test_s6_register_creates_service_dir_in_live_container(
     built_image: str, container_name: str,
 ) -> None:
     """S6ServiceManager.register_profile_gateway must create
-    ``/run/hermes-service/gateway-<profile>/`` and trigger s6-svscan rescan
+    ``/run/service/gateway-<profile>/`` and trigger s6-svscan rescan
     against the real s6 supervision tree."""
     start_container(built_image, container_name, cmd="sleep 120")
 
@@ -50,21 +49,21 @@ def test_s6_register_creates_service_dir_in_live_container(
     )
 
     # Service directory exists with the expected structure.
-    r = docker_exec(container_name, "test", "-d", "/run/hermes-service/gateway-phase3test")
+    r = docker_exec(container_name, "test", "-d", "/run/service/gateway-phase3test")
     assert r.returncode == 0, "service directory not created"
 
-    r = docker_exec(container_name, "test", "-f", "/run/hermes-service/gateway-phase3test/run")
+    r = docker_exec(container_name, "test", "-f", "/run/service/gateway-phase3test/run")
     assert r.returncode == 0, "run script not created"
 
     r = docker_exec(container_name, "test", "-f",
-              "/run/hermes-service/gateway-phase3test/log/run")
+              "/run/service/gateway-phase3test/log/run")
     assert r.returncode == 0, "log/run script not created"
 
     # s6-svscan picked it up — s6-svstat works against the dir.
     # `docker exec` doesn't put /command/ on PATH (only the supervision
     # tree does), so call s6-svstat by absolute path.
     r = docker_exec(container_name, "/command/s6-svstat",
-              "/run/hermes-service/gateway-phase3test")
+              "/run/service/gateway-phase3test")
     assert r.returncode == 0, f"s6-svstat failed: {r.stderr or r.stdout}"
 
     # list_profile_gateways picks it up.

@@ -12,11 +12,12 @@ import json, shlex, sys
 from gateway.session_context import scoped_current_session_id
 from tools.terminal_tool import terminal_tool
 from tools.process_registry import process_registry
+from hermes_cli.oneshot import _linger_for_background_completions
 with scoped_current_session_id("receipt-owner"):
     code = "import sys,time; time.sleep(.2); print('RECEIPT_STDOUT'); print('RECEIPT_STDERR',file=sys.stderr); sys.exit(7)"
     result = json.loads(terminal_tool(shlex.join([sys.executable, '-c', code]), background=True,
         notify_on_complete=True, task_id='receipt-task'))
-    process_registry.wait_for_pending_completions(None)
+    _linger_for_background_completions()
     session = process_registry.get(result['session_id'])
     session._reader_thread.join(timeout=10)
     print(json.dumps({'spawn': result, 'live': process_registry.read_log(session.id)}))

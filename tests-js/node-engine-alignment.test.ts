@@ -2,25 +2,24 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { load } from 'js-yaml'
 // semver ships no declarations in this lock; type the two library calls used here.
 const semver: { valid(version: string): string | null; satisfies(version: string, range: string): boolean } = require('semver')
 import { test } from 'vitest'
 
-interface Engines { node?: string }
+interface Engines { node?: string; npm?: string }
 interface Manifest { engines?: Engines }
-interface Lockfile { packages?: Record<string, Manifest> }
-interface PmLock { packages: { node: { version: string } } }
+interface Lockfile { packages: Record<string, Manifest> }
+interface PmLock { packages: { node: { version: string }; npm: { version: string } } }
 
-function read(relativePath: string): string {
-  return fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8')
+function readJson<T>(relativePath: string): T {
+  // SAFETY: these are repository-owned manifest/lock inputs, checked below.
+  return JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8')) as T
 }
 
-// SAFETY: these are repository-owned manifest/lock inputs, checked below.
-const root = JSON.parse(read('package.json')) as Manifest
-const desktop = JSON.parse(read('apps/desktop/package.json')) as Manifest
-const lock = load(read('pnpm-lock.yaml')) as Lockfile
-const pins = (JSON.parse(read('pm/lock.json')) as PmLock).packages
+const root = readJson<Manifest>('package.json')
+const desktop = readJson<Manifest>('apps/desktop/package.json')
+const lock = readJson<Lockfile>('package-lock.json')
+const pins = readJson<PmLock>('pm/lock.json').packages
 
 function nodeRange(manifest: Manifest): string {
   assert.ok(manifest.engines?.node, 'workspace must declare engines.node')
@@ -37,15 +36,31 @@ test.each([
   }
 })
 
-test('exact independently managed Node satisfies all declared lockfile engines', (): void => {
-  assert.ok(semver.valid(pins.node.version), 'node must be an exact pin')
-  assert.ok(Object.keys(lock.packages ?? {}).length > 0, 'pnpm-lock.yaml has no packages')
+test.each([
+  ['10.9.8', true], ['11.9.9', true], ['11.10.0', false], ['11.12.1', false],
+  ['11.16.9', false], ['11.17.0', true], ['12.0.2', true],
+] as const)('npm age-exclusion policy for %s is %s', (version: string, accepted: boolean): void => {
+  assert.ok(root.engines?.npm)
+  assert.equal(semver.satisfies(version, root.engines.npm), accepted)
+})
+
+test('exact independently managed Node and npm satisfy all declared lockfile engines', (): void => {
+  for (const tool of ['node', 'npm'] as const) {
+    assert.ok(semver.valid(pins[tool].version), `${tool} must be an exact pin`)
+  }
 
   for (const [name, manifest] of Object.entries({ ...lock.packages, root, desktop })) {
-    const range = manifest.engines?.node
+    for (const tool of ['node', 'npm'] as const) {
+      const range = manifest.engines?.[tool]
 
-    if (range) {
-      assert.ok(semver.satisfies(pins.node.version, range), `${name}: pinned node ${pins.node.version} violates ${range}`)
+      if (range) {
+        assert.ok(semver.satisfies(pins[tool].version, range), `${name}: pinned ${tool} ${pins[tool].version} violates ${range}`)
+      }
     }
   }
+})
+
+test('lockfile workspace engine mirrors match their manifests', (): void => {
+  assert.deepEqual(lock.packages[''].engines, root.engines)
+  assert.deepEqual(lock.packages['apps/desktop'].engines, desktop.engines)
 })

@@ -81,9 +81,9 @@ def running_cli(home: Path, install: Path):
     script = """
 import sys
 from pathlib import Path
-from hermes_cli import _startup_fast
+import hermes_constants
 # Model two installed runtime roots without copying the source tree.
-_startup_fast.project_root_str = lambda: sys.argv[1]
+hermes_constants.PROJECT_ROOT = Path(sys.argv[1])
 import cli
 
 def terminal_boundary(self):
@@ -129,11 +129,11 @@ def test_cli_entrypoint_registers_and_warns_once_for_live_shared_home(homes, tmp
             assert own[0]["hermes_home"] == hermes_home_key(homes)
             assert shared_profile_warning(project_root=stable)
             # A CLI record must not make a terminal process an update-owned backend.
-            from hermes_cli import _startup_fast
+            import hermes_constants
             from hermes_cli.update_inventory import UpdatePlan, _collect_ledger_runtimes
 
             with monkeypatch.context() as patcher:
-                patcher.setattr(_startup_fast, "project_root_str", lambda: str(canary))
+                patcher.setattr(hermes_constants, "PROJECT_ROOT", canary, raising=False)
                 assert own == process_identity.ledger_entries(verified_only=True)
                 assert own[0]["purpose"] not in process_identity.REAPABLE_PURPOSES
                 plan = UpdatePlan()

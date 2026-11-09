@@ -8,7 +8,6 @@ from pathlib import Path
 
 from hermes_constants import get_hermes_home
 
-from hermes_cli._startup_fast import project_root_str
 from hermes_cli.colors import Colors, color
 
 def _logger(mark: str, col: str):
@@ -65,7 +64,7 @@ def _remove_each(candidates, remove) -> list:
 
 def get_project_root() -> Path:
     """Get the project installation directory."""
-    return Path(project_root_str())
+    return Path(__file__).parent.parent.resolve()
 
 
 def code_removal_refusal() -> str | None:

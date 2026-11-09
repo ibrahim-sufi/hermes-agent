@@ -1,18 +1,16 @@
 import * as sdk from '@hermes/plugin-sdk'
 import { Codicon, Tip } from '@hermes/plugin-sdk'
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { type CanonicalGroupAttachment, CanonicalGroupAttachments, fetchCanonicalGroupAttachment } from './canonical-group-attachments'
 import { useCanonicalGroupLabels } from './canonical-group-labels'
 import { ASSIGNMENT_EVENT_KIND, CanonicalGroupAssignmentRow } from './canonical-group-lead'
-import { CanonicalGroupContinuedRow, CanonicalGroupPausedRow, type CanonicalGroupPausedRowProps, CanonicalGroupRoutedRow, CONTINUED_EVENT_KIND, isBoundedActivity, pausedDiscussions, ROUTED_EVENT_KIND } from './canonical-group-routed'
 import type { CanonicalGroupBinding, CanonicalRoomMember } from './canonical-groups'
-import type { GroupReasonMessages } from './group-reason-locales'
-import { groupReasonText } from './group-reason-text'
 import { type RoomHandoff, roomHandoffs, type RoomLogEvent } from './group-room-status'
 import { fill, ROOM_AVATAR_SIZE, RoomActivityRow, RoomMessage, RoomNoticeRow } from './group-room-ui'
 
 const MessageTextContent = typeof sdk === 'undefined' ? undefined : sdk.MessageTextContent
+const Streamdown = typeof sdk === 'undefined' ? undefined : sdk.Streamdown
 
 export interface CanonicalGroupEvent {
   seq: number
@@ -29,14 +27,10 @@ interface CanonicalGroupHistoryProps {
   events: CanonicalGroupEvent[]
   members?: CanonicalRoomMember[]
   disabled?: boolean
-  /** Whether the room gateway offers file downloads and inline previews. */
-  downloads?: boolean
   /** Hover Reply on a member's message: address the composer to that member. */
   onReply?: (member: CanonicalRoomMember | undefined, text: string, thread: string | undefined, author: string) => void
   /** A member's face; the workspace passes the Bot Mode avatar. */
   avatarFor?: (name: string, size: number) => ReactNode
-  /** Continue/Stop for a paused discussion; absent `maxContinues` (older runtime) keeps the plain limit notice. */
-  pause?: Pick<CanonicalGroupPausedRowProps, 'busy' | 'stopping' | 'onContinue' | 'onStop'> & { maxContinues?: number }
 }
 
 /** The server stamps every `groups.send` from this Desktop as this principal, so it has no name of its own. */
@@ -67,11 +61,9 @@ function eventTimeMs(timestamp?: number) {
   return Number.isFinite(new Date(at).getTime()) ? at : undefined
 }
 
-function EventBody({ event, labels, notice }: { event: CanonicalGroupEvent; labels: GroupReasonMessages & { turnNoAnswer: string }; notice?: string }) {
+function EventBody({ event, notice }: { event: CanonicalGroupEvent; notice?: string }) {
   if (notice) {
-    const reason = event.payload.error || event.payload.reason || event.payload.reason_code
-    const detail = reason === 'member_unavailable' ? labels.turnNoAnswer : groupReasonText(event.payload.error, labels) ||
-      groupReasonText(event.payload.reason, labels) || groupReasonText(event.payload.reason_code, labels)
+    const detail = event.payload.error || event.payload.reason || event.payload.reason_code
 
     return <p className="min-w-0 text-[0.6875rem] text-(--ui-text-tertiary)" data-selectable-text="true">
       <strong className="font-medium text-(--ui-text-secondary)">{notice}</strong>{detail && <>: {detail}</>}
@@ -80,9 +72,11 @@ function EventBody({ event, labels, notice }: { event: CanonicalGroupEvent; labe
 
   const text = event.payload.text || event.payload.content || ''
 
-  // Remote room text cannot resolve local files, images, directives or rich fences.
-  // The shared preview renderer permits only explicit public web links, opened on a click.
-  return MessageTextContent ? <MessageTextContent media={false} previewOnly text={text} /> : <>{text}</>
+  // The shared renderer (layout and large-message safeguards). media={false}: room text
+  // may come from another machine, so its MEDIA: paths never resolve against this gateway;
+  // room files keep their own download path below.
+  return MessageTextContent ? <MessageTextContent media={false} text={text} />
+    : Streamdown ? <Streamdown>{text}</Streamdown> : <>{text}</>
 }
 
 // Previews download the whole file over RPC; larger or unsized images keep only Download.
@@ -172,11 +166,9 @@ function ImagePreview({ binding, eventId, attachment, disabled }: {
   return previewable ? <div ref={box}>{src && <img alt={attachment.name} className="max-h-64 max-w-full rounded object-contain" src={src} />}</div> : null
 }
 
-export function CanonicalGroupHistory({ avatarFor, binding, events, members = [], disabled = false, downloads = true, onReply, pause }: CanonicalGroupHistoryProps) {
+export function CanonicalGroupHistory({ avatarFor, binding, events, members = [], disabled = false, onReply }: CanonicalGroupHistoryProps) {
   const labels = useCanonicalGroupLabels()
   const roster = new Map(members.map(member => [member.member_id, member]))
-  const maxContinues = pause?.maxContinues
-  const pauses = useMemo(() => typeof maxContinues === 'number' ? pausedDiscussions(events, maxContinues) : undefined, [events, maxContinues])
   const handoffsAfter = new Map<number, RoomHandoff[]>()
 
   for (const handoff of roomHandoffs(events as RoomLogEvent[], members)) {
@@ -200,12 +192,9 @@ export function CanonicalGroupHistory({ avatarFor, binding, events, members = []
   ])
 
   return <>{events.map(event => <Fragment key={event.seq}>
-    {event.kind === ASSIGNMENT_EVENT_KIND ? <CanonicalGroupAssignmentRow event={event} members={members} />
-      : event.kind === ROUTED_EVENT_KIND ? <CanonicalGroupRoutedRow event={event} members={members} />
-        : event.kind === CONTINUED_EVENT_KIND ? <CanonicalGroupContinuedRow />
-          : pause && pauses && isBoundedActivity(event)
-            ? <CanonicalGroupPausedRow busy={pause.busy} event={event} onContinue={pause.onContinue} onStop={pause.onStop} paused={pauses.get(event.seq) ?? { count: 0, actionable: false }} stopping={pause.stopping} />
-            : <HistoryRow avatarFor={avatarFor} binding={binding} disabled={disabled || !downloads} event={event} notices={notices} onReply={onReply} roster={roster} />}
+    {event.kind === ASSIGNMENT_EVENT_KIND
+      ? <CanonicalGroupAssignmentRow event={event} members={members} />
+      : <HistoryRow avatarFor={avatarFor} binding={binding} disabled={disabled} event={event} notices={notices} onReply={onReply} roster={roster} />}
     {handoffsAfter.get(event.seq)?.map(handoff =>
       <RoomActivityRow key={`handoff:${event.seq}:${handoff.to}`}>{fill(labels.handoff, { from: nameOf(handoff.from), to: nameOf(handoff.to) })}</RoomActivityRow>)}
   </Fragment>)}</>
@@ -231,7 +220,7 @@ function HistoryRow({ avatarFor, binding, disabled, event, notices, onReply, ros
   if (notice) {
     return <RoomNoticeRow avatar={member && avatarFor?.(member.profile || member.handle, 16)} kind={event.kind}>
       {author && <span className="shrink-0 font-medium text-(--ui-text-secondary)">{author}</span>}
-      <EventBody event={event} labels={labels} notice={notice} />
+      <EventBody event={event} notice={notice} />
     </RoomNoticeRow>
   }
 
@@ -255,7 +244,7 @@ function MessageRow({ author, avatarFor, binding, disabled, event, member, membe
 
   return <RoomMessage actions={canReply ? <ReplyAction author={author ?? ''} event={event} member={isUser ? undefined : member} onReply={onReply!} text={text} /> : undefined}
     author={author} avatar={face} badge={badge} isUser={isUser} timestampMs={eventTimeMs(event.created_at)}>
-    <EventBody event={event} labels={labels} />
+    <EventBody event={event} />
     <EventFiles binding={binding} disabled={disabled} event={event} />
   </RoomMessage>
 }

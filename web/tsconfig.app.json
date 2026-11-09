@@ -32,7 +32,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../apps/shared/src"],
-  // Node-only shared modules (the gateway client); this browser app never imports them.
-  "exclude": ["../apps/shared/src/node"]
+  "include": ["src", "../apps/shared/src"]
 }

@@ -101,7 +101,7 @@ export function renderRosterDialogs({
         }}
         open={Boolean(editing)}
       />
-      {grouping ? <GroupDialog bot={grouping} onClose={() => setGrouping(null)} onCreated={(group, origin) => openGroupChat(group, origin)} /> : null}
+      {grouping ? <GroupDialog bot={grouping} onClose={() => setGrouping(null)} /> : null}
       <ConfirmDialog
         busyLabel="Deleting…"
         confirmLabel={t.common.delete}
@@ -135,15 +135,15 @@ export function renderRosterDialogs({
         title={b.bot.deleteTitle}
       />
       <ConfirmDialog
-        busyLabel={b.group.disbanding}
-        confirmLabel={b.group.disbandAction}
+        busyLabel="Deleting…"
+        confirmLabel={b.group.deleteAction}
         description={
           deletingGroup
-            ? <span>{b.group.disbandDescPrefix}<span className="font-medium text-foreground">{deletingGroup.name}</span>{b.group.disbandDescSuffix(deletingGroup.members.length)}</span>
+            ? `This removes “${deletingGroup.name}” from its bots and clears the shared room log. The bots and their individual chats are kept.`
             : null
         }
         destructive
-        doneLabel={b.group.disbandDone}
+        doneLabel="Deleted"
         onClose={() => setDeletingGroup(null)}
         onConfirm={async () => {
           if (!deletingGroup) {
@@ -153,11 +153,11 @@ export function renderRosterDialogs({
           await disbandGroupChat(deletingGroup.name, deletingGroup.members)
           host.notify({
             kind: 'success',
-            message: b.group.disbanded(deletingGroup.name)
+            message: `Deleted group “${deletingGroup.name}”`
           })
         }}
         open={Boolean(deletingGroup)}
-        title={b.group.disbandTitle}
+        title={b.group.deleteTitle}
       />
     </>
   )

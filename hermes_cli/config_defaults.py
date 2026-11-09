@@ -5,6 +5,7 @@ docs of config.yaml.
 """
 
 from hermes_cli.config_defaults_auxiliary import _aux
+from hermes_cli.config_defaults_compression import _compression_defaults
 
 #: Image every container terminal backend (docker/modal/daytona, the singularity plugin) uses unless the
 #: user pins one. LEGACY_SANDBOX_IMAGES are the plain defaults that preceded the desktop stack
@@ -213,9 +214,10 @@ DEFAULT_CONFIG = {
         # clarify-tool reply; then it unblocks with "[user did not respond within Xm]". 0 or less =
         # unlimited. Resolved by tools/clarify_gateway.py::resolve_clarify_timeout (a legacy
         # top-level ``clarify.timeout`` still wins when explicitly set).
-        # 90s: an unanswered question must not hold the turn (and the chat) for long. A user who
-        # writes anything instead of answering cancels the question at once and their message runs.
-        "clarify_timeout": 90,
+        # 1h because users step away and a shorter value evicted the entry mid-think so a later
+        # button tap hit a dead entry. Tradeoff: a higher value holds the gateway's running-agent
+        # guard longer for a genuinely abandoned prompt — lower it to free the guard sooner. See #32762.
+        "clarify_timeout": 3600,
         # "Still working" status interval (seconds); 0 = off. Lower = faster feedback, more noise;
         # 180 catches spinning weak-model runs before users /restart.
         "gateway_notify_interval": 180,
@@ -560,127 +562,7 @@ DEFAULT_CONFIG = {
         },
     },
 
-    "compression": {
-        "enabled": True,
-        # checkpoint_required: fail closed before lossy compaction unless an active memory provider
-        # confirms checkpoint API compatibility and completes the checkpoint.
-        "checkpoint_required": False,
-        # progress_notices: when True, routine compression progress statuses (compacting/
-        # preflight/pre-API/idle/retry) reach chat gateways instead of being filtered as noise.
-        # Failure notices and manual /compress feedback are always visible.
-        "progress_notices": False,
-        # threshold: compress when context usage exceeds this ratio. Models with windows below 512K
-        # are floored at 0.75 (raise-only) so compaction doesn't fire with half the window free; set
-        # above 0.75 to override the floor.
-        "threshold": 0.50,
-        # threshold_tokens: optional absolute token cap — when set, compression triggers at the
-        # lower of the ratio threshold and this count. Clamped to the model's context length.
-        # Off by default: no single count suits windows from 64K to 1M+, so the ratio decides.
-        "threshold_tokens": None,
-        # "progress_notices": False,    # opt-in (#52995): when True, routine compression
-        "target_ratio": 0.20,         # fraction of threshold to preserve as recent tail
-        # tail_mode: "lean" = clamped 2.5%-of-window tail (10K floor / 25K cap) plus chunked
-        # digests, anchor index, verbatim user messages and session_search pointers in the summary
-        # (~3x fewer retained tokens; a few extra summarizer calls at the boundary). "legacy" =
-        # 0.20×threshold verbatim tail (100-240K tokens on big windows).
-        "tail_mode": "lean",
-        # protect_last_n: minimum recent messages kept uncompressed, honoured up to a small count
-        # floor; the verbatim tail is otherwise token-bounded and never above 20% of the window.
-        "protect_last_n": 20,
-        # min_tail_user_messages: REAL (actionable) user messages guaranteed to survive in the tail.
-        # 1 = single last-user anchor; raise (e.g. 3) when bulky tool outputs fill the tail budget.
-        "min_tail_user_messages": 1,
-        # max_attempts: retry rounds before a turn gives up with "max compression attempts reached".
-        # Raise (e.g. 6) for tool-schema-heavy sessions. Validated >= 1, cap 10.
-        "max_attempts": 3,
-        # proactive_prune_tokens: opt-in trigger (tokens) for the deterministic no-LLM tool-result
-        # prune, independent of `threshold` (which rarely fires on large windows, so old tool output
-        # is re-sent every turn); e.g. 48000 reclaims early. 0 = off. Tail protected by
-        # `protect_last_n`. Built-in compressor only. Each committed prune rewrites sent history and
-        # breaks the prompt-cache prefix — the min_reclaim gate below keeps those breaks episodic.
-        "proactive_prune_tokens": 0,
-        # Prune's summarize pass only touches tool results larger than this (chars); clamped >= 200
-        # so a generated summary can't be re-summarized.
-        "proactive_prune_min_result_chars": 8000,
-        # A prune only commits when it reclaims at least this many tokens, then waits for a
-        # trigger-sized runway to regrow before rearming. 0 = no minimum-savings gate.
-        "proactive_prune_min_reclaim_tokens": 4096,
-        # micro_compact: opt-in — after each turn fold the oldest un-absorbed exchange into a
-        # rolling summary, amortizing compression cost. Off by default because every pass rewrites
-        # sent history and breaks the prompt-cache prefix EVERY turn; enable only if the amortized
-        # stall beats the cached-prefix discount. See website/docs/developer-guide/micro-compaction.md.
-        "micro_compact": False,
-        # Cadence: run a pass every Nth completed turn (1 = one cache break per turn, 5 = a fifth of
-        # the breaks). Clamped >= 1; ignored unless micro_compact is true.
-        "micro_compact_every_n_turns": 1,
-        # Once the rolling summary exceeds this many tokens, the next pass re-summarizes it.
-        "micro_compact_defrag_threshold_tokens": 2000,
-        # Gateway session-hygiene force-compress threshold, by message count.
-        "hygiene_hard_message_limit": 5000,
-        # Max seconds the gateway waits for pre-agent hygiene compression WITHOUT forward progress.
-        # Inactivity budget: a slow model still streaming tokens extends the wait.
-        "hygiene_timeout_seconds": 30,
-        # Absolute cap on the hygiene wait even while tokens are moving (bounds a trickle stream).
-        # Clamped >= hygiene_timeout_seconds.
-        "hygiene_total_ceiling_seconds": 600,
-        "hygiene_failure_cooldown_seconds": 300,  # skip repeated failed hygiene attempts
-        # Max seconds an ARRIVING user turn is held while a streaming hygiene summary finishes;
-        # bounds user-visible latency (keep under chat idle timeouts, Telegram ~30s). On expiry the
-        # turn proceeds uncompressed; the detached worker keeps its watermark-fenced commit, so the
-        # summary is adopted at the next safe boundary.
-        "hygiene_max_turn_hold_seconds": 10,
-        # Inactivity budget for in-agent compress_context (loop, /compress, preflight); same
-        # progress-aware semantics as hygiene_timeout_seconds. 0 = disable the owned wrapper
-        # (callers passing commit_fence, e.g. gateway hygiene, never use it). Floored at the auxiliary
-        # compression request timeout (auxiliary.compression.timeout, min 300s): the host never judges
-        # silence before the summary request itself would time out.
-        "context_timeout_seconds": 120,
-        # Absolute cap on the *pre-commit* compress_context wait (summary/stream phase) even while
-        # tokens move. Clamped >= context_timeout_seconds when that is > 0. A started SessionDB
-        # commit is never abandoned: past the ceiling it is logged (WARNING, then ERROR) and
-        # surfaced on the warning channel while the host keeps waiting.
-        "context_total_ceiling_seconds": 600,
-        # Non-system head messages always kept verbatim, in ADDITION to the (always protected)
-        # system prompt. 0 = pin nothing but system prompt + summary + tail.
-        "protect_first_n": 3,
-        # When True, auto-compression whose summary fails (aux error / non-JSON / timeout) aborts
-        # instead of dropping the middle with a "summary unavailable" placeholder; the session
-        # freezes at its size until /compress (bypasses the cooldown) or /new.
-        "abort_on_summary_failure": False,
-        # (Historical key name.) When True, gpt-5.4/5.5/5.6 and gpt-6 Astra (any slug containing
-        # "astra" without "900k") on the ChatGPT Codex OAuth route raise their compaction trigger to
-        # 85%: Codex hard-caps them at a 272K window, so the global 50% would compact at ~136K. False = global `threshold`. Only that route; the same models via
-        # OpenAI direct, OpenRouter or another relay keep the global value.
-        "codex_gpt55_autoraise": True,
-        # Show the one-time autoraise banner; False keeps the autoraise, hides the notice.
-        "codex_gpt55_autoraise_notice": True,
-        # Codex app-server thread compaction mode. The codex agent owns the thread context, so
-        # Hermes' summarizer cannot shrink it. native = codex decides; hermes = Hermes' threshold
-        # triggers thread/compact/start; off = never auto-trigger.
-        "codex_app_server_auto": "native",
-        # Opt in to OpenAI server-side compaction on the Responses API. Only gpt-5.6-family on
-        # api.openai.com or the Codex backend; local compression stays as fallback.
-        "codex_responses_native": False,
-        # Absolute server compaction trigger (input tokens). None follows the local trigger with a
-        # safety margin; explicit values only clamp downward so the server goes first.
-        "codex_responses_compact_threshold": None,
-        # in_place: compaction rewrites the message list and system prompt WITHOUT rotating the
-        # session id (no parent_session_id chain, no `name #N` renumbering), avoiding the session-rotation
-        # bug cluster. Pre-compaction turns are soft-archived under the same id (active=0, compacted=1) —
-        # still session_search-able. False = legacy rotating-compaction path.
-        "in_place": True,
-        # Per-model threshold overrides: keys substring-match the model name (longest wins), values
-        # replace the global `threshold`, e.g. {"glm-5.2": 0.40}. Prefix a key with "<provider>:" to
-        # scope it to one route ({"openai-codex:astra": 0.85} leaves Astra on OpenRouter/Nous at the
-        # global value). The <512K floor (0.75) still applies raise-only on top.
-        "model_thresholds": {},
-        # Opt-in idle compaction (0 = off): a session resuming after this many idle seconds compacts up
-        # front, before the first reply. Time-based complement to `threshold`; skipped when already at/below
-        # threshold × target_ratio; honors the same cooldown/anti-thrash/lock guards. Example: 1800 = 30 min.
-        "idle_compact_after_seconds": 0,
-        # Opt-in: write the next summary in the background near the trigger; compaction uses (or waits for) it if it still covers the same messages.
-        "prepare_ahead": False,
-    },
+    "compression": _compression_defaults(),
     # Anthropic prompt caching (Claude via OpenRouter or native API). cache_ttl: "5m" | "1h" | "auto"
     # (auto = 1h for human-paced sessions — cli/tui/desktop/messaging — and 5m for subagent, cron,
     # oneshot, webhook, kanban, api, tool, batch); other non-falsy values are ignored; falsy (false, null, "off",
@@ -743,11 +625,13 @@ DEFAULT_CONFIG = {
         # none|minimal|low|medium|high|xhigh|max|ultra ("" = provider default); extra_body =
         # OpenAI-compatible request fields. Vision: download_timeout = image HTTP download (s).
         "vision": _aux(120, download_timeout=30),
-        # web_extract, session_search, skills_hub: no aux LLM any more, leftover blocks are ignored.
-        # Compression: raise timeout for local models. no_progress_timeout: seconds a streamed call
-        # goes without a substantive chunk before it fails fast into retry/fallback; None = built-in
-        # 60s default. Independent of "timeout" (the overall request budget). See #108104.
+        # web_extract and session_search no longer use an aux LLM; leftover blocks in user config
+        # are ignored. Compression: raise timeout for local models. no_progress_timeout:
+        # seconds a streamed call goes without a substantive chunk before it fails fast into
+        # retry/fallback; None = built-in 60s default. Independent of "timeout" (the overall request
+        # budget) — raising "timeout" alone does not widen this window. See #108104.
         "compression": _aux(120, no_progress_timeout=None),
+        "skills_hub": _aux(30),
         "approval": _aux(30),   # classifier — a fast/cheap model is recommended
         # /review reviewer: a full subagent on the async delegation rail, credentials resolved like
         # delegation.provider pins. "auto" + "" = main agent's model. api_mode forces transport:
@@ -772,12 +656,12 @@ DEFAULT_CONFIG = {
         "memory_query_rewrite": _aux(8, reasoning_effort=False),
         "tts_audio_tags": _aux(30),
         "voice_chat": {**_aux(120), "reasoning_effort": "none"},  # agent/voice_turn_route.py; off = lowest valid
-        # Kanban: triage_specifier expands a Triage one-liner into a spec; kanban_decomposer a JSON graph.
+        # Kanban: triage_specifier expands a Triage one-liner into a spec (cheap model OK);
+        # kanban_decomposer emits a JSON graph of child tasks (more tokens).
         "triage_specifier": _aux(120),
         "kanban_decomposer": _aux(180),
         "profile_describer": _aux(60),   # 1-2 sentence profile blurb; short, cheap
         "goal_judge": _aux(60),          # /goal satisfaction + contract drafting; JSON calls
-        "group_router": _aux(20),        # Group Chat routing "auto": who answers; fast/cheap model OK
         # Curator skill-usage review can take minutes on reasoning models (umbrellas over hundreds
         # of skills); route cheaper via `hermes model` → auxiliary → Curator.
         "curator": _aux(600),
@@ -859,9 +743,9 @@ DEFAULT_CONFIG = {
         # Also clear terminal scrollback on classic-CLI full redraw/resize recovery; enable when a
         # terminal/tmux stack stamps stale prompt chrome into scrollback.
         "cli_rebuild_scrollback_on_redraw": False,
-        "persist_prompts": True,  # one-line scrollback summary of resolved approval/clarify prompts
+        # Print a one-line summary of resolved modal prompts (approval/clarify) to scrollback.
+        "persist_prompts": True,
         "inline_diffs": True,     # inline diff previews for write_file/patch/skill_manage
-        "inline_images": "auto",  # CLI/TUI transcript images (attachments, tool results): auto|kitty|iterm|unicode|off
         # Append a one-line advisory to the final response when a write_file/patch failed this turn
         # and was never superseded by a successful write to the same path (catches "half the
         # parallel patches failed, model claims success").
@@ -1152,7 +1036,7 @@ DEFAULT_CONFIG = {
         "cloud_trim_keep_ms": 300,  # how much of each pause survives (natural pacing)
         "local": {
             "model": "base",  # tiny, base, small, medium, large-v3, turbo
-            "language": "",  # blank = inherit stt.language; set "en", "es", ... to force
+            "language": "",  # auto-detect; set "en", "es", ... to force
             "initial_prompt": "",
             # Anti-hallucination (faster-whisper decodes junk from silence). vad: Silero filter
             # (false = raw audio, for music/ambient). A segment is dropped only if no_speech_prob
@@ -1165,27 +1049,27 @@ DEFAULT_CONFIG = {
         },
         "groq": {
             "model": "whisper-large-v3-turbo",  # whisper-large-v3-turbo, whisper-large-v3
-            "language": "",  # blank = inherit stt.language; set "en", "es", ... to force
+            "language": "",  # auto-detect; set "en", "es", ... to force
         },
         "openai": {
             # whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe, gpt-transcribe
             "model": "whisper-1",
             "streaming_model": "gpt-live-transcribe",  # stt.streaming; the one model with mid-utterance deltas
-            "language": "",  # blank = inherit stt.language; set "en", "es", ... to force
+            "language": "",  # auto-detect; set "en", "es", ... to force
             "timeout": 60,  # seconds; allow self-hosted backends time to cold-start
             "max_retries": 1,  # OpenAI SDK transport retries
         },
         "mistral": {
             "model": "voxtral-mini-latest",  # voxtral-mini-latest, voxtral-mini-2602
-            "language": "",  # blank = inherit stt.language; set "en", "es", ... to force
+            "language": "",  # auto-detect; set "en", "es", ... to force
         },
         "xai": {
             "model": "",  # "" = STT_XAI_MODEL or grok-voice-transcribe-2.0; or grok-voice-transcribe-1.0
-            "language": "",  # blank = inherit stt.language; set "en", "es", ... to force
+            "language": "",  # auto-detect; set "en", "es", ... to force
         },
         "elevenlabs": {
             "model_id": "scribe_v2",  # scribe_v2, scribe_v1
-            "language_code": "",  # blank = inherit stt.language; set "eng", "spa", ... to force
+            "language_code": "",  # auto-detect; set "eng", "spa", ... to force
             "tag_audio_events": False,
             "diarize": False,
         },
@@ -1354,9 +1238,9 @@ DEFAULT_CONFIG = {
         "child_timeout_seconds": 0,
         # Subagent effort: "ultra" | "max" | "xhigh" | "high" | "medium" | "low" | "minimal" | "none" (empty = inherit)
         "reasoning_effort": "",
-        # Max parallel children per batch AND concurrent background units (async beyond it runs sync). Floor 1.
+        # Max parallel children per batch AND max concurrent background delegation units; async
+        # dispatches beyond it run synchronously. Floor 1, no ceiling.
         "max_concurrent_children": 10,
-        "prefix_stagger_seconds": 0,  # max s siblings wait for the 1st child's 1st chunk (not a stagger); 0 = off
         # Background fan-outs return as ONE message when the whole call finishes. true = each task
         # (or `group`) returns on its own as it finishes — more new turns for the orchestrator.
         "independent_completions": False,
@@ -1704,11 +1588,11 @@ DEFAULT_CONFIG = {
         # abandoned. 0 = no deadline (load inline). Max 600.
         "load_timeout_seconds": 10,
         # Read-only plugin update-check cadence, hours (gateway tick; 0 disables). Applying stays
-        # explicit: `hermes plugins update <name>`, or auto_apply below (catalog and tracked git
-        # plugins, scan-gated by that same pipeline).
+        # explicit: `hermes plugins update <name>`, or auto_apply below (git-class plugins only,
+        # scan-gated by that same pipeline).
         "auto_update_check_hours": 24,
-        # Opt-in unattended apply (`hermes plugins auto-update on`, Desktop's Plugins tab): catalog +
-        # tracked git plugins, same scan/consent pipeline as the manual update (never a widened pin).
+        # Opt-in unattended apply for the cadence check. Git-row plugins ONLY; every apply runs the
+        # same security scan / consent pipeline as the manual update command.
         "auto_apply": False,
         # Where third-party Python plugins run. in_process: imported into Hermes (default).
         # host: one plugin-host process per profile runs them and they reach Hermes only through
@@ -2121,8 +2005,8 @@ DEFAULT_CONFIG = {
         "loop_watchdog_max_strikes": 3,
         # Allow all users without allowlists (security opt-in).
         "allow_all_users": False,
-        # Bot-to-bot loop guard: max_events per window before a cooldown; max_hops bot messages per exchange.
-        "bot_loop_guard": {"enabled": True, "max_events": 20, "window_seconds": 300, "cooldown_seconds": 600, "max_hops": 4, "bot_replies_expect_reply": False},
+        # Bot-to-bot loop guard: admitted bot messages per conversation before a cooldown.
+        "bot_loop_guard": {"enabled": True, "max_events": 20, "window_seconds": 300, "cooldown_seconds": 600},
         # Startup-liveness watchdog: stdlib-only daemon thread armed at process entry that
         # hard-exits 75 if the loop isn't live within the deadline. Armed before config loads, so
         # run_gateway() bridges these to HERMES_STARTUP_WATCHDOG / HERMES_STARTUP_WATCHDOG_TIMEOUT_S
@@ -2286,8 +2170,13 @@ DEFAULT_CONFIG = {
         # legacy index is detected (a later layout change gets a rebuild notice without a size estimate);
         # require = the same notices worded as REQUIRED (tooling may gate on it); off = none.
         "fts_optimize_notice": "advise",
+        # CJK-bigram search index (messages_fts_cjk). When the extension is built
+        # (native/fts5_cjk/build.sh → ~/.hermes/lib/libfts5_cjk.so), 1-2 char CJK terms get exact
+        # index matches instead of LIKE scans. True = use when present (inert otherwise); False =
+        # never load/serve it. Bridged to HERMES_CJK_FTS.
+        "cjk_fts": True,
         # Slow session-search threshold (ms): searches at/above it log one INFO line with the
-        # routing path (fts5 / trigram / like_scan). 0 logs every search. Bridged to
+        # routing path (fts_cjk / fts5 / trigram / like_scan). 0 logs every search. Bridged to
         # HERMES_SEARCH_SLOW_MS.
         "search_slow_ms": 1000,
         # Transcript guards (a runaway 100k+ row session can exhaust memory when materialized at
@@ -2700,7 +2589,7 @@ DEFAULT_CONFIG = {
         # Extra ports detection probes for an external llama-server (besides 8080).
         "detect_ports": [],
     },
-    "_config_version": 53,  # Config schema version - bump this when adding new required fields
+    "_config_version": 52,  # Config schema version - bump this when adding new required fields
 }
 
 
@@ -2910,10 +2799,12 @@ OPTIONAL_ENV_VARS = OptionalEnvVars({
     # ── Bundled skills (opt-in) ── category="skill" (not "tool") so the sandbox env blocklist in
     # tools/environments/local.py does NOT rewrite them; skills need them passed through to curl
     # via tools/env_passthrough.py.
-    "NOTION_API_KEY": _skill("Notion integration token (used by the Teams meeting pipeline's Notion sink)",
+    "NOTION_API_KEY": _skill("Notion integration token (used by the `notion` skill)",
         "Notion API key", "https://www.notion.so/my-integrations"),
     "LINEAR_API_KEY": _skill("Linear personal API key (used by the `linear` skill)",
         "Linear API key", "https://linear.app/settings/account/security"),
+    "AIRTABLE_API_KEY": _skill("Airtable personal access token (used by the `airtable` skill)",
+        "Airtable API key", "https://airtable.com/create/tokens"),
     "TENOR_API_KEY": _skill("Tenor API key for GIF search (used by the `gif-search` skill)",
         "Tenor API key", "https://developers.google.com/tenor/guides/quickstart"),
     # ── Honcho ──

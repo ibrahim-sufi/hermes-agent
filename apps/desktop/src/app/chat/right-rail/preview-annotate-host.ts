@@ -10,21 +10,9 @@ import {
   type AnnotatePinChrome
 } from '@/lib/preview-annotate'
 
-import {
-  type PreviewDriveGuest,
-  runPreviewGuestScript,
-  withPreviewDeadline,
-  withPreviewGuestActivity
-} from './preview-drive-channels'
-
 export interface PreviewAnnotateGuest {
-  capture?: (rect: { height: number; width: number; x: number; y: number }, signal?: AbortSignal) => Promise<string>
+  capture?: (rect: { height: number; width: number; x: number; y: number }) => Promise<string>
   executeJavaScript: (code: string) => Promise<unknown>
-  /** Only bounded capture work is awake; waiting for the next user pick is not. */
-  withActivity: <T>(
-    operation: (execute: PreviewAnnotateGuest['executeJavaScript']) => Promise<T>,
-    signal?: AbortSignal
-  ) => Promise<T>
 }
 
 /**
@@ -44,47 +32,12 @@ export function bindPreviewExecuteJavaScript(webview: {
   }
 }
 
-export function createPreviewAnnotateGuest(webview: PreviewDriveGuest | null): null | PreviewAnnotateGuest {
-  if (!webview?.executeJavaScript) {
-    return null
-  }
-
-  return {
-    capture: async (rect, signal) => {
-      const webContentsId = webview.getWebContentsId?.()
-
-      if (typeof webContentsId !== 'number') {
-        throw new Error('preview guest has no webContents')
-      }
-
-      const viewport = (await runPreviewGuestScript(
-        webview,
-        '({ width: window.innerWidth, height: window.innerHeight })',
-        signal
-      )) as { height: number; width: number }
-      signal?.throwIfAborted()
-      const dataUrl = await window.hermesDesktop.capturePreview?.({ rect, viewport, webContentsId })
-
-      if (!dataUrl) {
-        throw new Error('preview capture is unavailable')
-      }
-
-      return dataUrl
-    },
-    executeJavaScript: bindPreviewExecuteJavaScript(webview),
-    withActivity: (operation, signal) =>
-      withPreviewGuestActivity(webview, () => operation(code => runPreviewGuestScript(webview, code, signal)), signal)
-  }
-}
-
 const padRect = (rect: { height: number; width: number; x: number; y: number }) => ({
   height: rect.height + ANNOTATE_CROP_PAD * 2,
   width: rect.width + ANNOTATE_CROP_PAD * 2,
   x: Math.max(0, rect.x - ANNOTATE_CROP_PAD),
   y: Math.max(0, rect.y - ANNOTATE_CROP_PAD)
 })
-
-let nextOverlaySession = 0
 
 /**
  * Build the guest install script by concatenation, never a template literal.
@@ -93,44 +46,17 @@ let nextOverlaySession = 0
  * interpolations in the host — `rect is not defined` — and Annotate looks
  * like a dead button.
  */
-export function overlayInstallScript(source: string, session = ++nextOverlaySession): string {
-  return (
-    '(function(){' +
-    `if ((window.__hermesAnnotateSession || 0) >= ${session}) return;` +
-    `window.__hermesAnnotateSession = ${session};` +
-    'if (window.__hermesAnnotate) window.__hermesAnnotate.teardown();' +
-    'var api=' + source + ';window.__hermesAnnotate=api;api.install();})()'
-  )
+export function overlayInstallScript(source: string): string {
+  return '(function(){var api=' + source + ';window.__hermesAnnotate=api;api.install();})()'
 }
 
-export async function installAnnotateOverlay(guest: PreviewAnnotateGuest, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted()
-  const session = ++nextOverlaySession
-
-  const teardown = () => {
-    void teardownAnnotateOverlay(guest, session).catch(() => undefined)
-  }
-
-  signal.addEventListener('abort', teardown, { once: true })
-
-  try {
-    await guest.executeJavaScript(overlayInstallScript(annotateInPageSource(), session))
-    signal.throwIfAborted()
-  } catch (error) {
-    signal.removeEventListener('abort', teardown)
-    // Navigation may commit between abort cleanup and the queued install.
-    teardown()
-    throw error
-  }
+export async function installAnnotateOverlay(guest: PreviewAnnotateGuest): Promise<void> {
+  await guest.executeJavaScript(overlayInstallScript(annotateInPageSource()))
 }
 
-async function teardownAnnotateOverlay(guest: PreviewAnnotateGuest, session: number): Promise<void> {
+export async function teardownAnnotateOverlay(guest: PreviewAnnotateGuest): Promise<void> {
   await guest.executeJavaScript(`
     (function () {
-      if ((window.__hermesAnnotateSession || 0) > ${session}) return;
-      // Retain ownership even before installation, so a cancelled queued
-      // script cannot resurrect its overlay or replace a newer session.
-      window.__hermesAnnotateSession = ${session};
       if (window.__hermesAnnotate && window.__hermesAnnotate.teardown) {
         window.__hermesAnnotate.teardown();
       }
@@ -170,9 +96,9 @@ export async function hideAnnotateDraft(guest: PreviewAnnotateGuest): Promise<vo
 }
 
 /** Guest calls are best-effort dressing: never let one fail the capture. */
-async function tryGuest(execute: PreviewAnnotateGuest['executeJavaScript'], code: string): Promise<void> {
+async function tryGuest(guest: PreviewAnnotateGuest, code: string): Promise<void> {
   try {
-    await execute(code)
+    await guest.executeJavaScript(code)
   } catch {
     // The overlay may be mid-teardown or the guest gone. Shoot anyway.
   }
@@ -180,38 +106,21 @@ async function tryGuest(execute: PreviewAnnotateGuest['executeJavaScript'], code
 
 export async function captureAnnotateCrop(
   guest: PreviewAnnotateGuest,
-  rect: AnnotatePinChrome['rect'],
-  lifetime?: AbortSignal
+  rect: AnnotatePinChrome['rect']
 ): Promise<string> {
   if (!guest.capture) {
     throw new Error('preview capture is unavailable')
   }
 
-  // Keep both paint frames, capturePage and cleanup inside one bounded lease.
-  // Waiting for the next user pick must not hold this lease.
-  return withPreviewDeadline(async signal => {
-    const cleanup = '(function () { if (window.__hermesAnnotate) window.__hermesAnnotate.endCapture(); })()'
+  // Bracket the shot: the overlay hides saved pins and waits for a paint, so
+  // the crop carries this comment's marker and no neighbour's. `endCapture`
+  // runs even when the capture throws, or one failed crop leaves every saved
+  // pin invisible on the page.
+  await tryGuest(guest, 'window.__hermesAnnotate ? window.__hermesAnnotate.beginCapture() : null')
 
-    try {
-      return await guest.withActivity(async execute => {
-        try {
-          await tryGuest(execute, 'window.__hermesAnnotate ? window.__hermesAnnotate.beginCapture() : null')
-          signal.throwIfAborted()
-
-          return await guest.capture!(padRect(rect), signal)
-        } finally {
-          if (!signal.aborted) {
-            await tryGuest(execute, cleanup)
-          }
-        }
-      }, signal)
-    } finally {
-      // A deadline can interrupt native capture before its promise settles.
-      // Restore chrome without acquiring another lease. Stop/navigation already
-      // tears down the overlay, so never dress a replacement annotation session.
-      if (signal.aborted && !lifetime?.aborted) {
-        void guest.executeJavaScript(cleanup).catch(() => undefined)
-      }
-    }
-  }, lifetime)
+  try {
+    return await guest.capture(padRect(rect))
+  } finally {
+    await tryGuest(guest, 'window.__hermesAnnotate && window.__hermesAnnotate.endCapture()')
+  }
 }

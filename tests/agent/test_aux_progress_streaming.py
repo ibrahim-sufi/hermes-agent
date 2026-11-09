@@ -17,7 +17,6 @@ import pytest
 from agent.auxiliary_client import (
     _AnthropicCompletionsAdapter,
     _ChatStreamAccumulator,
-    _ClassifiedAttempt,
     _CodexCompletionsAdapter,
     _acreate_with_progress,
     _acreate_with_stream,
@@ -215,12 +214,11 @@ class TestCreateWithProgress:
         with (
             aux_progress_hook(fence.touch_progress),
             _aux_thread_local_hook(_aux_dispatch, lambda: dispatches.append(1)),
-            pytest.raises(_ClassifiedAttempt) as raised,
+            pytest.raises(_AuthError),
         ):
             _create_with_progress_once(
                 client, {"model": "m1", "messages": [], "timeout": 30},
             )
-        assert isinstance(raised.value.failure.error, _AuthError)
         assert dispatches == [1]  # dispatch telemetry preserved
         assert fence.progress_observed is False
 
@@ -357,7 +355,7 @@ class TestAggregateChatStream:
         """#100501: an endpoint that sends one chunk then goes silent fails at the task's no-progress
         window as a timeout (so retry/fallback run), not at the request read timeout. Recovery rungs
         go through the default relay callback and must keep the task's window."""
-        from agent.auxiliary_client import _classify_failure, _should_skip_same_provider_retry
+        from agent.auxiliary_client import _should_skip_same_provider_retry
 
         _gates, call = sse
         started = time.monotonic()
@@ -365,8 +363,7 @@ class TestAggregateChatStream:
             call("m", "compression", via_relay_seam=via_relay_seam)
         assert time.monotonic() - started < 5.0
         assert "stalled: no new output for 0.4s" in str(excinfo.value)
-        assert _should_skip_same_provider_retry(
-            "compression", _classify_failure(excinfo.value, "", None, None))
+        assert _should_skip_same_provider_retry("compression", excinfo.value)
 
     @pytest.mark.parametrize("case", ["reasoning_before_first_token", "provider_stale_timeout_before_first_token",
                                       "stall_after_terminal_usage", "late_timer_after_pool_reuse"])
@@ -876,11 +873,10 @@ class TestAsyncStreamAggregation:
         with (
             aux_progress_hook(fence.touch_progress),
             _aux_thread_local_hook(_aux_dispatch, lambda: dispatches.append(1)),
-            pytest.raises(_ClassifiedAttempt) as raised,
+            pytest.raises(_AuthError),
         ):
             await _acreate_with_progress(
                 _AsyncClient(), {"model": "m1", "messages": [], "timeout": 30},
             )
-        assert isinstance(raised.value.failure.error, _AuthError)
         assert dispatches == [1]
         assert fence.progress_observed is False

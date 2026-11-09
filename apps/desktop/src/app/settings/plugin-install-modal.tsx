@@ -457,9 +457,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
   const [advancedOpen, setAdvancedOpen] = useState(!verified)
   const [force, setForce] = useState(request.force ?? false)
   const [pinRef, setPinRef] = useState('')
-  // The last install's failure, and whether Force (replacing the installed plugin) answers it.
-  const [installFailure, setInstallFailure] = useState<null | { canForce?: boolean; error: string }>(null)
-  const installError = installFailure?.error ?? null
+  const [installError, setInstallError] = useState<null | string>(null)
   const [installUncertain, setInstallUncertain] = useState(false)
   // The source moved past the commit on screen: the dialog read it again and shows the new one for review.
   const [sourceMoved, setSourceMoved] = useState(false)
@@ -492,7 +490,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
 
   const install = async (withoutReviewedCommit = false) => {
     onInstallingChange(true)
-    setInstallFailure(null)
+    setInstallError(null)
     setSourceMoved(false)
     setConfirmUnreviewed(false)
     // The commit the user clicked on: a lookup finishing after the click never changes it.
@@ -537,17 +535,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
           reviewAgain(detected)
         },
         needsConfirm: () => setConfirmUnreviewed(true),
-        // "Already exists. Enable force reinstall" points at the Force switch, which a catalog pick
-        // otherwise keeps out of sight: show it.
-        failed: () => {
-          const failed = outcome as Extract<InstallOutcome, { status: 'failed' }>
-
-          setInstallFailure({ canForce: failed.canForce, error: failed.error })
-
-          if (failed.canForce) {
-            setAdvancedOpen(true)
-          }
-        }
+        failed: () => setInstallError((outcome as Extract<InstallOutcome, { status: 'failed' }>).error)
       }
 
       settle[outcome.status]()
@@ -587,7 +575,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
             busy={installing}
             copy={m}
             force={force}
-            offerForce={Boolean(partial || installFailure?.canForce)}
+            offerForce={Boolean(partial)}
             onForceChange={setForce}
             pin={{ value: pinRef, invalid: pinInvalid, onChange: setPinRef }}
             probe={probe}

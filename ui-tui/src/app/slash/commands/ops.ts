@@ -12,8 +12,7 @@ import type {
   SpawnTreeListResponse,
   SpawnTreeLoadResponse,
   ToolsConfigureResponse
-} from '@hermes/shared/gateway-types'
-
+} from '../../../gatewayTypes.js'
 import { t } from '../../../i18n/runtime.js'
 import { appendTranscriptMessage } from '../../../lib/messages.js'
 import type { PanelSection } from '../../../types.js'
@@ -24,8 +23,6 @@ import { turnController } from '../../turnController.js'
 import { noSkillsInstalled } from '../../userMessages.js'
 import { canonicalTools } from '../canonicalSessionCommands.js'
 import type { SlashCommand } from '../types.js'
-
-import { runPluginsUpdateAll } from './pluginsUpdateAll.js'
 
 interface SkillInfo {
   category?: string
@@ -779,10 +776,6 @@ export const opsCommands: SlashCommand[] = [
       // text slash worker so it stays at parity with `hermes plugins`.
       if (!arg.trim()) {
         return patchOverlayState({ pluginsHub: true })
-      }
-
-      if (arg.trim() === 'update') {
-        return runPluginsUpdateAll(ctx)
       }
 
       ctx.gateway.gw

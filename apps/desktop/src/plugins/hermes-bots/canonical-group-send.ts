@@ -1,7 +1,6 @@
 import { randomUuid } from '@hermes/plugin-sdk'
 
 import type { CanonicalGroupBinding } from './canonical-groups'
-import { botsText } from './i18n'
 
 const STORAGE_KEY = 'hermes.desktop.canonicalGroupSends.v1'
 
@@ -12,18 +11,11 @@ export interface PreparedCanonicalGroupSend {
     event_id: string
     payload: Record<string, unknown>
   }
-  /** Requests that may have posted this intent: one more is recorded before each request leaves,
-   *  one less when the gateway proves a request admitted nothing (`admitted: false`) or it never
-   *  left. Zero: nothing of it is in the room. Entries journaled before this count read as one. */
-  attempts?: number
-  /** Set when the last request that may have posted it was withdrawn: its words went back for
-   *  editing, so a later open restores them as a draft, not as a Send to retry. */
-  handedBack?: true
 }
 
 function journalKey(binding: CanonicalGroupBinding): string {
   if (![binding.connectionId, binding.profile, binding.roomId].every(value => typeof value === 'string' && value.trim())) {
-    throw new Error(botsText().group.sendRouteRequired)
+    throw new Error('Canonical group Send requires an explicit connection, profile and room')
   }
 
   // A separate namespace inside the existing origin-scoped native journal.
@@ -38,7 +30,7 @@ async function readJournal(): Promise<Record<string, PreparedCanonicalGroupSend>
     : window.localStorage.getItem(STORAGE_KEY) || '{}')
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(botsText().group.savedMessagesUnreadable)
+    throw new Error('Invalid canonical group Send journal')
   }
 
   return parsed as Record<string, PreparedCanonicalGroupSend>
@@ -58,7 +50,7 @@ async function compareAndSet(
   // downgrade a native write failure to Chromium's deferred localStorage.
   if (native) {
     // An older preload has no atomic op: refuse rather than fall back to a racy read-then-write.
-    if (!native.compareAndSet) {throw new Error(botsText().group.sendNeedsUpdate)}
+    if (!native.compareAndSet) {throw new Error('Group Send needs an updated Desktop; restart Hermes Desktop')}
 
     return native.compareAndSet(key, expected, entry)
   }
@@ -79,10 +71,8 @@ async function compareAndSet(
 
 function validEntry(binding: CanonicalGroupBinding, key: string, entry: PreparedCanonicalGroupSend | undefined) {
   if (entry && (journalKey(entry.binding) !== key || entry.params.room_id !== binding.roomId ||
-    !entry.params.event_id || !entry.params.payload || typeof entry.params.payload !== 'object' ||
-    (entry.attempts !== undefined && !(Number.isSafeInteger(entry.attempts) && entry.attempts >= 0)) ||
-    (entry.handedBack !== undefined && (entry.handedBack !== true || entry.attempts !== 0)))) {
-    throw new Error(botsText().group.savedMessageUnreadable)
+    !entry.params.event_id || !entry.params.payload || typeof entry.params.payload !== 'object')) {
+    throw new Error('Invalid canonical group Send entry')
   }
 
   return entry
@@ -92,20 +82,6 @@ export async function readCanonicalGroupSend(binding: CanonicalGroupBinding): Pr
   const key = journalKey(binding)
 
   return validEntry(binding, key, (await readJournal())[key])
-}
-
-function freshEntry(binding: CanonicalGroupBinding, payload: Record<string, unknown>): PreparedCanonicalGroupSend {
-  const eventId = randomUuid()
-
-  return JSON.parse(JSON.stringify({
-    binding,
-    params: {
-      room_id: binding.roomId,
-      event_id: eventId,
-      payload: { ...payload, thread_id: payload.thread_id ?? eventId }
-    },
-    attempts: 0
-  }))
 }
 
 // One unresolved intent per room. This is not an automatic outbox: callers show
@@ -120,71 +96,28 @@ export async function prepareCanonicalGroupSend(
 
   if (existing) {return existing}
 
-  const entry = freshEntry(binding, payload)
+  const eventId = randomUuid()
+
+  const entry: PreparedCanonicalGroupSend = JSON.parse(JSON.stringify({
+    binding,
+    params: {
+      room_id: binding.roomId,
+      event_id: eventId,
+      payload: { ...payload, thread_id: payload.thread_id ?? eventId }
+    }
+  }))
+
   const key = journalKey(binding)
   const { current } = await compareAndSet(key, null, JSON.stringify(entry))
 
   return validEntry(binding, key, current === null ? undefined : JSON.parse(current)) ?? entry
 }
 
-/** Replace an intent nothing of which was admitted (`attempts: 0`), handed back for editing, with
- *  the edited words: the edit is the durable handoff of its words. Converges on the intent when
- *  another window is sending it again; null when another window finished with it. */
-export async function replaceCanonicalGroupSend(
-  binding: CanonicalGroupBinding,
-  eventId: string,
-  payload: Record<string, unknown>
-): Promise<PreparedCanonicalGroupSend | null> {
-  const key = journalKey(binding)
-  const existing = await readCanonicalGroupSend(binding)
-
-  if (existing?.params.event_id !== eventId) {return null}
-
-  if (existing.attempts !== 0) {return existing}
-  const entry = freshEntry(binding, payload)
-  const { applied, current } = await compareAndSet(key, JSON.stringify(existing), JSON.stringify(entry))
-  const stored = validEntry(binding, key, current === null ? undefined : JSON.parse(current))
-
-  return applied ? entry : stored?.params.event_id === eventId ? stored : null
-}
-
 // Call only after a definitive groups.send ACK; timeout/unknown retains the
 // exact event and payload. Compare-and-delete at the journal owner: a delayed or
 // wrong ACK whose intent was already replaced (fresh event_id) deletes nothing.
-// Resolves only once the slot no longer holds this intent; a failed write throws.
 export async function retireCanonicalGroupSend(binding: CanonicalGroupBinding, eventId: string): Promise<void> {
-  for (;;) {
-    const entry = await readCanonicalGroupSend(binding)
+  const entry = await readCanonicalGroupSend(binding)
 
-    if (entry?.params.event_id !== eventId) {return}
-
-    if ((await compareAndSet(journalKey(binding), JSON.stringify(entry), null)).applied) {return}
-  }
+  if (entry?.params.event_id === eventId) {await compareAndSet(journalKey(binding), JSON.stringify(entry), null)}
 }
-
-async function countRequests(binding: CanonicalGroupBinding, eventId: string, step: 1 | -1): Promise<number | null> {
-  const key = journalKey(binding)
-
-  for (;;) {
-    const entry = await readCanonicalGroupSend(binding)
-
-    if (entry?.params.event_id !== eventId) {return null}
-    const attempts = entry.attempts ?? 1
-
-    // An entry journaled before the count may have been sent by requests nobody counted.
-    if (step < 0 && (entry.attempts === undefined || !attempts)) {return attempts}
-    const { handedBack: _, ...rest } = entry
-    const next = attempts + step ? { ...rest, attempts: attempts + step } : { ...rest, attempts: 0, handedBack: true as const }
-    const { applied } = await compareAndSet(key, JSON.stringify(entry), JSON.stringify(next))
-
-    if (applied) {return attempts + step}
-  }
-}
-
-/** Record one more request before it leaves; null when the slot no longer holds this intent
- *  (another window finished with it), so this window must not send it. */
-export const attemptCanonicalGroupSend = (binding: CanonicalGroupBinding, eventId: string) => countRequests(binding, eventId, 1)
-
-/** A recorded request provably admitted nothing: the gateway refused it with `admitted: false`, or it
- *  never left. Returns the requests that still may have posted the intent (0: none did), or null. */
-export const withdrawCanonicalGroupSend = (binding: CanonicalGroupBinding, eventId: string) => countRequests(binding, eventId, -1)

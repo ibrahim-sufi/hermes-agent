@@ -677,10 +677,10 @@ def atomic_roundtrip_yaml_save(path: str | Path, new_state: dict, *,
 
 
 def safe_json_loads(text: str, default: Any = None) -> Any:
-    """Parse JSON, returning *default* on any parse error (a too-deeply nested body included)."""
+    """Parse JSON, returning *default* on any parse error."""
     try:
         return json.loads(text)
-    except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
+    except (json.JSONDecodeError, TypeError, ValueError):
         return default
 
 
@@ -728,6 +728,11 @@ def env_int(key: str, default: int = 0) -> int:
 def env_float(key: str, default: float = 0.0) -> float:
     """Read an environment variable as a float, with fallback."""
     return _env_number(key, default, float)
+
+
+def env_bool(key: str, default: bool = False) -> bool:
+    """Read an environment variable as a boolean."""
+    return is_truthy_value(os.getenv(key, ""), default=default)
 
 
 _PROXY_ENV_KEYS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy")

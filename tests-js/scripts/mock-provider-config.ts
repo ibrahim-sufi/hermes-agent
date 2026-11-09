@@ -15,7 +15,6 @@ const configSchema = z.object({
   approvals: section.optional(),
   display: section.optional(),
   onboarding: section.optional(),
-  stt: section.optional(),
 }).passthrough()
 
 //: Entry name this writer owns in ``custom_providers``; reconfiguring replaces
@@ -77,8 +76,6 @@ export function writeMockProviderConfig(
     // first message the smoke sends; these journeys test install and update, so
     // the root config records onboarding as done.
     onboarding: { ...config.onboarding, run: false },
-    // Pre-v2026.8.13 releases lazy-install faster-whisper on the WS reader when STT is on, stalling the first send.
-    stt: { ...config.stt, enabled: false },
     ...extra,
   }
 

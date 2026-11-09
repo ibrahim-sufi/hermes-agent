@@ -1,6 +1,6 @@
-# Self-contained Hermes TUI, compiled by the same recipe as pnpm.
+# Self-contained Hermes TUI, compiled by the same recipe as npm.
 { hermesNpmLib, ... }:
-hermesNpmLib.buildPnpmPackage {
+hermesNpmLib.buildNpmPackage {
   dirs = [
     "ui-tui"
     "apps/shared"

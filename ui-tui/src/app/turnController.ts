@@ -1,5 +1,4 @@
 import type { MessageCompletePayload, SubagentEventPayload, ToolLabel } from '@hermes/shared/gateway-events'
-import type { SessionInterruptResponse } from '@hermes/shared/gateway-types'
 
 import {
   REASONING_PULSE_MS,
@@ -8,6 +7,7 @@ import {
   STREAM_SCROLL_BATCH_MS,
   STREAM_TYPING_BATCH_MS
 } from '../config/timing.js'
+import type { SessionInterruptResponse } from '../gatewayTypes.js'
 import { t } from '../i18n/runtime.js'
 import { appendToolShelfMessage, isToolShelfMessage } from '../lib/liveProgress.js'
 import { hasReasoningTag, splitReasoning } from '../lib/reasoning.js'
@@ -350,7 +350,6 @@ class TurnController {
     this.activeTools = []
     this.streamTimer = clear(this.streamTimer)
     this.bufRef = ''
-
     // `keepTurnArchive`: the turn-over signal arrived before the final; the sealed segments
     // and finished tool rows wait for `recordMessageComplete` to archive them.
     if (!opts.keepTurnArchive) {
@@ -622,21 +621,6 @@ class TurnController {
     this.segmentMessages = [
       ...this.segmentMessages,
       { kind: 'diff', role: 'assistant', text: block, ...(tools.length && { tools }) }
-    ]
-    patchTurnState({ streamSegments: this.segmentMessages })
-  }
-
-  // A tool's image lands right under the trail line of the call that made it,
-  // ahead of whatever the agent streams next (same anchoring as diffs).
-  pushImageSegment(path?: null | string, toolId?: string) {
-    if (!path || this.interrupted) {
-      return
-    }
-
-    this.flushStreamingSegment()
-    this.segmentMessages = [
-      ...this.segmentMessages,
-      { images: [path], kind: 'image', role: 'system', text: '', ...(toolId && { imageRevision: toolId }) }
     ]
     patchTurnState({ streamSegments: this.segmentMessages })
   }

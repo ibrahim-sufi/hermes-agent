@@ -1,6 +1,6 @@
 /**
- * #143571: a gateway Group Chat row in the Bots roster offers Disband from its
- * right-click menu. Disband confirms, disbands the room on its own gateway
+ * #143571: a gateway Group Chat row in the Bots roster offers Delete from its
+ * right-click menu. Delete confirms, disbands the room on its own gateway
  * (`groups.disband`), drops it from the list, forgets its bindings and closes
  * a pane still showing it. A refused disband keeps the row and says why.
  *
@@ -8,7 +8,7 @@
  */
 
 import type * as HermesSdk from '@hermes/plugin-sdk'
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -25,14 +25,13 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
       ...sdk.host,
       notify,
       requestProfile,
-      state: { ...sdk.host.state, connectionId: atom<null | string>('local'), gateway: atom('open'), profile: atom('default') }
+      state: { ...sdk.host.state, connectionId: atom<null | string>('local'), profile: atom('default') }
     },
     usePluginI18n: () => translateBotsIn('en')
   }
 })
 
-import { $canonicalGroupBindings, publishCanonicalGroup } from './canonical-group-registry'
-import { renderGatewayRooms } from './gateway-group-rooms-test-harness'
+import { $canonicalGroupBindings, CanonicalGroupList, publishCanonicalGroup } from './canonical-group-registry'
 import { $groupChatWorkspace } from './group-chat'
 import { dropGroupMainTab, recordGroupMainTab } from './group-panes'
 
@@ -44,6 +43,10 @@ beforeEach(() => {
   rooms = [room]
   refuse = ''
   requestProfile.mockImplementation(async (_route: unknown, method: string, params: { room_id?: string }) => {
+    if (method === 'groups.capabilities') {
+      return { driver: true }
+    }
+
     if (method === 'groups.list') {
       return { rooms, next_offset: null }
     }
@@ -55,7 +58,7 @@ beforeEach(() => {
 
       rooms = rooms.filter(r => r.room_id !== params.room_id)
 
-      return { tombstone: { room_id: params.room_id, disbanded_at: 1 } }
+      return { tombstone: { room_id: params.room_id } }
     }
 
     return {}
@@ -71,26 +74,24 @@ afterEach(() => {
   dropGroupMainTab('Other crew')
 })
 
-async function openDisbandConfirm() {
+async function openDeleteConfirm() {
   fireEvent.contextMenu(await screen.findByRole('button', { name: 'Launch crew' }))
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'Disband' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
   return within(await screen.findByRole('dialog'))
 }
 
-it('disbands a group chat from its row menu: confirm, disband on its gateway, gone from the list', async () => {
+it('deletes a gateway group from its row menu: confirm, disband on its gateway, gone from the list', async () => {
   const onOpen = vi.fn()
-  renderGatewayRooms(onOpen)
-  const dialog = await openDisbandConfirm()
-  const key = 'canonical:local:default:room-1'
+  render(<CanonicalGroupList onOpen={onOpen} />)
+  const dialog = await openDeleteConfirm()
+  const key = Object.keys($canonicalGroupBindings.get()).find(k => k.startsWith('canonical:'))!
   $groupChatWorkspace.set(key)
 
   expect(dialog.getByText('Launch crew')).toBeTruthy()
   fireEvent.click(dialog.getByRole('button', { name: 'Disband' }))
 
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Launch crew' })).toBeNull())
-  // The re-read after the disband no longer lists it.
-  await waitFor(() => expect(requestProfile.mock.calls.filter(([, method]) => method === 'groups.list').length).toBeGreaterThan(1))
   const disband = requestProfile.mock.calls.filter(([, method]) => method === 'groups.disband')
   expect(disband).toHaveLength(1)
   expect(disband[0][0]).toMatchObject({ connectionId: 'local', profile: 'default' })
@@ -101,13 +102,13 @@ it('disbands a group chat from its row menu: confirm, disband on its gateway, go
   expect(onOpen).not.toHaveBeenCalled()
 })
 
-it('keeps the row and explains that the group chat was kept when disband fails', async () => {
+it('keeps the row and shows the gateway refusal when the disband fails', async () => {
   refuse = 'room is busy'
-  renderGatewayRooms()
-  const dialog = await openDisbandConfirm()
+  render(<CanonicalGroupList onOpen={vi.fn()} />)
+  const dialog = await openDeleteConfirm()
   fireEvent.click(dialog.getByRole('button', { name: 'Disband' }))
 
-  expect(await dialog.findByText(/The group chat has been kept/)).toBeTruthy()
+  expect(await dialog.findByText(/room is busy/)).toBeTruthy()
   expect(screen.getByRole('button', { hidden: true, name: 'Launch crew' })).toBeTruthy()
   expect(notify).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'success' }))
 })
@@ -124,11 +125,10 @@ it('closes the tab and selection opened under the room name, and leaves another 
   recordGroupMainTab(other.name, closeOther)
   $groupChatWorkspace.set(room.name)
 
-  renderGatewayRooms()
-  fireEvent.click((await openDisbandConfirm()).getByRole('button', { name: 'Disband' }))
+  render(<CanonicalGroupList onOpen={vi.fn()} />)
+  fireEvent.click((await openDeleteConfirm()).getByRole('button', { name: 'Disband' }))
 
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Launch crew' })).toBeNull())
-  await waitFor(() => expect(requestProfile.mock.calls.filter(([, method]) => method === 'groups.list').length).toBeGreaterThan(1))
   expect(closeAlias).toHaveBeenCalledTimes(1)
   expect($groupChatWorkspace.get()).toBeNull()
   expect(closeOther).not.toHaveBeenCalled()

@@ -1,14 +1,9 @@
 interface OrderRow {
   activity: number
-  /** A gateway room: never reads a Desktop room record, which is keyed by name. */
-  gateway?: unknown
   kind: 'bot' | 'group'
   name?: string
   pinned: boolean
 }
-
-const savedOrder = (row: OrderRow, rooms: Record<string, { rosterOrder?: number }>) =>
-  (row.gateway ? undefined : rooms[row.name!]?.rosterOrder) ?? Infinity
 
 /** Reorder room slots, not bots or folders. Pinning remains the outer band. */
 export function sortGroupRosterRows<T extends OrderRow>(
@@ -22,7 +17,7 @@ export function sortGroupRosterRows<T extends OrderRow>(
     .sort(
       (a, b) =>
         Number(b.pinned) - Number(a.pinned) ||
-        savedOrder(a, rooms) - savedOrder(b, rooms)
+        (rooms[a.name!]?.rosterOrder ?? Infinity) - (rooms[b.name!]?.rosterOrder ?? Infinity)
     )
 
   let index = 0

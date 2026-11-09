@@ -23,9 +23,14 @@ import { $autoSpeakReplies, $bargeInEnabled, $bargeInThresholdMultiplier, $voice
 import { useComposerScope } from '../scope'
 
 import { useMicRecorder } from './use-mic-recorder'
-import { feedVoiceConversationSpeech, type PendingVoiceResponse } from './voice-conversation-speech'
 
 export type ConversationStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+
+interface PendingVoiceResponse {
+  id: string
+  pending: boolean
+  text: string
+}
 
 interface VoiceConversationOptions {
   busy: boolean
@@ -347,9 +352,8 @@ export function useVoiceConversation({
 
   const startListening = useCallback(async () => {
     pendingStartRef.current = false
-    const conversation = conversationRef.current
 
-    if (!conversation || !enabledRef.current || mutedRef.current || busyRef.current) {
+    if (!enabledRef.current || mutedRef.current || busyRef.current) {
       return
     }
 
@@ -361,8 +365,6 @@ export function useVoiceConversation({
       return
     }
 
-    const current = () => conversationRef.current === conversation && enabledRef.current && !mutedRef.current
-
     // Let the wake-word listener fully release the capture device before we
     // open ours — opening the mic while wake still holds it makes getUserMedia
     // fail (the "clicked voice but it never starts listening" bug).
@@ -373,7 +375,9 @@ export function useVoiceConversation({
     }
 
     // enabled/muted/busy or an interleaved turn may have changed while we waited.
-    if (!current() || busyRef.current || statusRef.current !== 'idle') {
+    const conversation = conversationRef.current
+
+    if (!conversation || !enabledRef.current || mutedRef.current || busyRef.current || statusRef.current !== 'idle') {
       return
     }
 
@@ -394,18 +398,6 @@ export function useVoiceConversation({
         onMeterFailure: () => void handleTurn(),
         onSilence: () => void handleTurn()
       })
-
-      if (!current()) {
-        return
-      }
-
-      if (busyRef.current) {
-        handle.cancel()
-        pendingStartRef.current = true
-
-        return
-      }
-
       setStatus('listening')
       // Same warm-up as push-to-talk dictation: a cold local model loads while
       // the user speaks instead of inside the transcription timeout (#105955).
@@ -422,10 +414,6 @@ export function useVoiceConversation({
       clearTurnTimeout()
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
-      if (!current() || (error instanceof DOMException && error.name === 'AbortError')) {
-        return
-      }
-
       notifyError(error, voiceCopy.couldNotStartSession)
       pendingStartRef.current = false
       setStatus('idle')
@@ -623,10 +611,10 @@ export function useVoiceConversation({
     stopBargeMonitorRef.current = monitorSpeechDuringPlayback({
       isPlaying: () => $voicePlayback.get().status === 'speaking',
       thresholdMultiplier: $bargeInThresholdMultiplier.get(),
-      onSpeech: duringPlayback => {
-        // Capture-time provenance survives a sentence gap before queued audio
-        // is delivered; snapshot the reply before playback is cut or consumed.
-        bargeEchoTextRef.current = duringPlayback ? (pendingResponse()?.text ?? '') : ''
+      onSpeech: () => {
+        // Snapshot before playback is cut: the reply may be consumed by the
+        // time the capture is transcribed.
+        bargeEchoTextRef.current = $voicePlayback.get().status === 'speaking' ? (pendingResponse()?.text ?? '') : ''
         bargeCapturePendingRef.current = true
         bargedRef.current = true
         markVoicePlaybackInterrupted()
@@ -678,16 +666,37 @@ export function useVoiceConversation({
     return unsubscribe
   }, [])
 
+  /** Push any new reply text into the live session; finish when complete. */
   const feedSpeechSession = useCallback(
-    (responseId: string) =>
-      feedVoiceConversationSpeech(
-        speechSessionRef,
-        responseIdRef,
-        responseId,
-        pendingResponse,
-        spokenSourceLengthRef,
-        busyRef
-      ),
+    (responseId: string) => {
+      const session = speechSessionRef.current
+
+      if (!session || responseIdRef.current !== responseId) {
+        return
+      }
+
+      const response = pendingResponse()
+
+      if (response && response.id === responseId) {
+        if (response.text.length > spokenSourceLengthRef.current) {
+          session.append(response.text.slice(spokenSourceLengthRef.current))
+          spokenSourceLengthRef.current = response.text.length
+        }
+
+        if (!response.pending) {
+          // A sealed interim is a committed boundary even while its tool runs.
+          // Keep the session open for the next bubble, but speak this tail now.
+          if (busyRef.current) {
+            session.flush?.()
+          } else {
+            session.finish()
+          }
+        }
+      } else if (!busyRef.current) {
+        // Reply consumed/vanished while we were speaking — close out the turn.
+        session.finish()
+      }
+    },
     [pendingResponse]
   )
 

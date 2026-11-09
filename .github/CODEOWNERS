@@ -41,16 +41,12 @@ pyproject.toml                  @NousResearch/hermes-agent-core
 package.json                    @NousResearch/hermes-agent-core
 uv.lock                         @NousResearch/hermes-agent-core
 *package-lock.json              @NousResearch/hermes-agent-core
-/pnpm-lock.yaml                 @NousResearch/hermes-agent-core
 /flake.lock                     @NousResearch/hermes-agent-core
 /pm/lock.json                   @NousResearch/hermes-agent-core
 *Dockerfile                     @NousResearch/hermes-agent-core
 
-# A root .npmrc (registry, auth) would apply to every pnpm install.
+# The npm supply-chain quarantine (min-release-age) lives here.
 .npmrc                          @NousResearch/hermes-agent-core
-# The pnpm workspace's quarantine (minimumReleaseAge), its overrides, and the
-# dependencies allowed to run build scripts (allowBuilds) live here.
-/pnpm-workspace.yaml            @NousResearch/hermes-agent-core
 
 # Where PM fetches artifacts from.
 /pm/artifact-mirror.json        @NousResearch/hermes-agent-core

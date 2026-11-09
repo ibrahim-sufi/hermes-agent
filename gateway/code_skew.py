@@ -12,9 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hermes_cli._startup_fast import project_root_str
-
-_PROJECT_ROOT = Path(project_root_str())
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _boot_fingerprint: str | None = None
 
 

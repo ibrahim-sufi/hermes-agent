@@ -1,6 +1,4 @@
-import {createRequire} from 'node:module';
-// Playwright comes from the desktop workspace that declares it.
-const {chromium}=createRequire(new URL('../../../apps/desktop/package.json', import.meta.url))('@playwright/test');
+import {chromium} from 'playwright';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 const out=process.env.THREAD_SCROLL_OUTPUT;

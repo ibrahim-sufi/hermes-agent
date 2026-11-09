@@ -2,7 +2,7 @@
 
 Main's TUI owned its own sidecar and never depended on an external daemon, so an open TUI must come
 back on its own after ANY end of the shared gateway: a crash, its idle exit, or a planned
-`hermes gateway stop` while the TUI is open. The bounded recovery slot (`@hermes/shared/gateway-client`
+`hermes gateway stop` while the TUI is open. The bounded recovery slot (gatewayClient.ts
 OWNER_RECOVERY_LIMIT) is what keeps a crash-looping owner from being respawned forever."""
 
 from __future__ import annotations
@@ -140,15 +140,13 @@ def test_restart_wait_owner_is_attachable_on_start_and_recover(monkeypatch, tmp_
     ensured = []
     monkeypatch.setattr(gateway_runtime, "ensure_gateway_runtime",
                         lambda h, timeout=30, idle_exit=False: (ensured.append(h), receipt)[1])
-    reply = json.dumps({"ok": True, "protocol": 1, "id": 1, "result": {
-        "instance_id": endpoint.instance_id, "profile_id": endpoint.profile_id, "ticket": "grant",
-        "runtime_protocol": 1}}).encode() + b"\n"
+    reply = json.dumps({"ok": True, "id": 1, "result": {
+        "instance_id": endpoint.instance_id, "profile_id": endpoint.profile_id, "ticket": "grant"}}).encode()
     if os.name == "nt":
         import gateway.runtime_bootstrap_windows as windows_bootstrap
         monkeypatch.setattr(windows_bootstrap, "query_runtime_control", lambda h, req, timeout: reply)
     else:
         import hermes_cli.gateway_runtime_discovery as discovery
-        stream = io.BytesIO(reply)
 
         class Peer:
             def __enter__(self):
@@ -160,11 +158,8 @@ def test_restart_wait_owner_is_attachable_on_start_and_recover(monkeypatch, tmp_
             def sendall(self, _request):
                 pass
 
-            def settimeout(self, _timeout):
-                pass
-
-            def recv(self, size):
-                return stream.read(size)
+            def makefile(self, _mode):
+                return io.BytesIO(reply)
 
         monkeypatch.setattr(discovery, "connect_private", lambda h, timeout: Peer())
 

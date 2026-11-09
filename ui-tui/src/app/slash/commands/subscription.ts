@@ -4,8 +4,7 @@ import type {
   SubscriptionPreviewResponse,
   SubscriptionStateResponse,
   SubscriptionUpgradeResponse
-} from '@hermes/shared/gateway-types'
-
+} from '../../../gatewayTypes.js'
 import { t } from '../../../i18n/runtime.js'
 import { openExternalUrl } from '../../../lib/openExternalUrl.js'
 import type { SubscriptionOverlayCtx } from '../../interfaces.js'

@@ -173,7 +173,8 @@ export function QuickEntryApp() {
               fontFamily: 'inherit',
               fontSize: 15,
               minWidth: 0,
-              opacity: state.connected ? 1 : 0.55
+              opacity: state.connected ? 1 : 0.55,
+              outline: 'none'
             }}
             value={state.draft}
           />

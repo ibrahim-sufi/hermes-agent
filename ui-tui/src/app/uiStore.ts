@@ -24,7 +24,6 @@ const buildUiState = (): UiState => ({
   info: null,
   liveSessionCount: 0,
   inlineDiffs: true,
-  inlineImages: true,
   mouseTracking: MOUSE_TRACKING,
   notice: null,
   pasteCollapseLines: 5,
@@ -49,7 +48,6 @@ export const $uiState = atom<UiState>(buildUiState())
 
 export const $uiTheme = computed($uiState, state => state.theme)
 export const $uiSessionId = computed($uiState, state => state.sid)
-export const $uiInlineImages = computed($uiState, state => state.inlineImages)
 
 export const getUiState = () => $uiState.get()
 
